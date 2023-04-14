@@ -3,15 +3,23 @@ import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
 import audioUrl from "./assets/en.mp3";
-import { Whisper, DecodingOptions } from "./whisper";
-//import init from "@webonnx/wonnx-wasm";
+import { Whisper, DecodingOptions } from "@core/whisper";
+import encoderWasmModelUrl from "@models/encoder_int8.onnx";
+import decoderWasmModelUrl from "@models/decoder_int8.onnx";
+import preprocessorWasmModelUrl from "@models/preprocessor_int8.onnx";
+import positionalEmbeddingUrl from "@models/positional_embedding.bin.gz";
 
-let first = true;
+const CHUNK_LENGTH = 10;
 
 async function convert() {
-    if (!first) return;
-    first = false;
-    let whisper = new Whisper(true);
+    let whisper = new Whisper(
+        preprocessorWasmModelUrl,
+        encoderWasmModelUrl,
+        decoderWasmModelUrl,
+        positionalEmbeddingUrl,
+        CHUNK_LENGTH,
+        true
+    );
     let audio = await whisper.load_audio(audioUrl);
     audio = whisper.pad_or_trim(audio);
     let mel = await whisper.preprocessor(audio);
@@ -22,7 +30,6 @@ async function convert() {
 
 function App() {
     const [count, setCount] = useState(0);
-    convert();
 
     return (
         <div className="App">
@@ -31,7 +38,11 @@ function App() {
                     <img src={viteLogo} className="logo" alt="Vite logo" />
                 </a>
                 <a href="https://reactjs.org" target="_blank" rel="noreferrer">
-                    <img src={reactLogo} className="logo react" alt="React logo" />
+                    <img
+                        src={reactLogo}
+                        className="logo react"
+                        alt="React logo"
+                    />
                 </a>
             </div>
             <h1>Vite + React</h1>
@@ -39,8 +50,8 @@ function App() {
                 <button
                     onClick={() => {
                         setCount((count) => count + 1);
-                        loadAudio();
-                        source.start(0);
+                        convert();
+                        //source.start(0);
                     }}
                 >
                     count is {count}
@@ -49,7 +60,9 @@ function App() {
                     Edit <code>src/App.jsx</code> and save to test HMR
                 </p>
             </div>
-            <p className="read-the-docs">Click on the Vite and React logos to learn more</p>
+            <p className="read-the-docs">
+                Click on the Vite and React logos to learn more
+            </p>
         </div>
     );
 }

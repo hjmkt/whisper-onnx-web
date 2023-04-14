@@ -1,23 +1,7 @@
 import * as ort from "onnxruntime-web";
 import { get_tokenizer } from "./tokenizer";
 import pako from "pako";
-import encoderWebglModelUrl from "./assets/encoder_webgl.onnx";
-import encoderWasmModelUrl from "./assets/encoder.onnx";
-import decoderWebglModelUrl from "./assets/decoder_webgl.onnx";
-import decoderWasmModelUrl from "./assets/decoder.onnx";
-import preprocessorWebglModelUrl from "./assets/preprocessor_webgl.onnx";
-import preprocessorWasmModelUrl from "./assets/preprocessor.onnx";
 import { positional_embedding } from "./positional_embedding";
-//import init from "@webonnx/wonnx-wasm";
-//import { Session, Input } from "@webonnx/wonnx-wasm";
-
-function exact_div(x, y) {
-    return Math.floor(x / y);
-}
-
-const SAMPLE_RATE = 16000;
-const CHUNK_LENGTH = 30;
-const N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE;
 
 function DecodingResult(
     audio_features,
@@ -60,11 +44,12 @@ function Tensor(shape, dtype, data) {
     this.dtype = dtype;
 
     this.sliceStep = function (step) {
-        let newShape = [exact_div(this.shape[0], step), this.shape[1]];
+        let newShape = [Math.floor(this.shape[0] / step), this.shape[1]];
         let newTensor = new Tensor(newShape, this.dtype);
         for (let i = 0; i < newShape[0]; i++) {
             for (let j = 0; j < newShape[1]; j++) {
-                newTensor.data[i * newShape[1] + j] = this.data[i * step * newShape[1] + j];
+                newTensor.data[i * newShape[1] + j] =
+                    this.data[i * step * newShape[1] + j];
             }
         }
         return newTensor;
@@ -94,7 +79,10 @@ function Tensor(shape, dtype, data) {
             } else {
                 newTensor.shape[0] = args[1] - args[0];
                 let stride = this.shape.slice(1).reduce((a, b) => a * b, 1);
-                newTensor.data = this.data.slice(args[0] * stride, args[1] * stride);
+                newTensor.data = this.data.slice(
+                    args[0] * stride,
+                    args[1] * stride
+                );
             }
         }
         return newTensor;
@@ -114,7 +102,8 @@ function Tensor(shape, dtype, data) {
         let newTensor = new Tensor(newShape, this.dtype);
         for (let i = 0; i < newShape[0]; i++) {
             for (let j = 0; j < newShape[1]; j++) {
-                newTensor.data[i * newShape[1] + j] = this.data[i * this.shape[1] + j + start];
+                newTensor.data[i * newShape[1] + j] =
+                    this.data[i * this.shape[1] + j + start];
             }
         }
         return newTensor;
@@ -127,7 +116,10 @@ function Tensor(shape, dtype, data) {
     this.softmax2d = function () {
         let newTensor = new Tensor(this.shape, this.dtype);
         for (let i = 0; i < this.shape[0]; i++) {
-            let slice = this.slice2d(i * this.shape[1], (i + 1) * this.shape[1]);
+            let slice = this.slice2d(
+                i * this.shape[1],
+                (i + 1) * this.shape[1]
+            );
             let smax = softmax(slice.data);
             for (let j = 0; j < smax.length; j++) {
                 newTensor.data[i * this.shape[1] + j] = smax[j];
@@ -139,7 +131,10 @@ function Tensor(shape, dtype, data) {
     this.log_softmax2d = function () {
         let newTensor = new Tensor(this.shape, this.dtype);
         for (let i = 0; i < this.shape[0]; i++) {
-            let slice = this.slice2d(i * this.shape[1], (i + 1) * this.shape[1]);
+            let slice = this.slice2d(
+                i * this.shape[1],
+                (i + 1) * this.shape[1]
+            );
             let smax = softmax(slice.data);
             for (let j = 0; j < smax.length; j++) {
                 newTensor.data[i * this.shape[1] + j] = Math.log(smax[j]);
@@ -177,7 +172,10 @@ function compressionRatio(text) {
 
 function softmax(arr) {
     const expArr = arr.map((x) => Math.exp(x));
-    const sum = expArr.reduce((accumulator, currentValue) => accumulator + currentValue, 0);
+    const sum = expArr.reduce(
+        (accumulator, currentValue) => accumulator + currentValue,
+        0
+    );
 
     return expArr.map((x) => x / sum);
 }
@@ -213,15 +211,18 @@ function Inference(model, initial_token_length) {
             tokens = tokens.slice2d(-1);
         }
         let offset = this.model.self_attn_value_cache.dims[1] - 1;
-        let positional_embedding = this.model.positional_embedding.slice(offset, offset + tokens.shape[1]);
-        let [l, new_self_attn_key_cache, new_self_attn_value_cache] = await this.model.decoder(
-            tokens,
-            this.model.self_attn_key_cache,
-            this.model.self_attn_value_cache,
-            this.model.cross_attn_key_cache,
-            this.model.cross_attn_value_cache,
-            positional_embedding
-        );
+        let positional_embedding = (
+            await this.model.positional_embedding
+        ).slice(offset, offset + tokens.shape[1]);
+        let [l, new_self_attn_key_cache, new_self_attn_value_cache] =
+            await this.model.decoder(
+                tokens,
+                this.model.self_attn_key_cache,
+                this.model.self_attn_value_cache,
+                this.model.cross_attn_key_cache,
+                this.model.cross_attn_value_cache,
+                positional_embedding
+            );
         this.model.self_attn_key_cache = new_self_attn_key_cache;
         this.model.self_attn_value_cache = new_self_attn_value_cache;
         return l;
@@ -249,7 +250,7 @@ function MaximumLikelihoodRanker(length_penalty) {
         }
 
         //let lengths = tokens.map((s) => s.map((t) => t.size()));
-        let lengths = tokens.map((s) => s.length);
+        //let lengths = tokens.map((s) => s.length);
         //let maxIndices = sum_logprobs.data.map((p, i) => scores(p, lengths[i]).indexOf(max(scores(p, lengths[i]))));
         let maxIndices = [0];
         return maxIndices;
@@ -284,7 +285,11 @@ function GreedyDecoder(temperature, eot) {
         tokens = new_tokens;
 
         let completed = tokens.slice(-1)[0] == this.eot;
-        tokens = new Tensor([1, tokens.length], "int32", new Int32Array(tokens));
+        tokens = new Tensor(
+            [1, tokens.length],
+            "int32",
+            new Int32Array(tokens)
+        );
         return [tokens, completed];
     };
 
@@ -307,7 +312,8 @@ function SuppressBlank(tokenizer, sample_begin) {
         if (tokens.shape[0] == this.sample_begin) {
             for (let i = 0; i < logits.length; i++) {
                 // set negative infinity to blank token and EOT token
-                logits[i][this.tokenizer.encode(" ") + [this.tokenizer.eot]] = Number.NEGATIVE_INFINITY;
+                logits[i][this.tokenizer.encode(" ") + [this.tokenizer.eot]] =
+                    Number.NEGATIVE_INFINITY;
             }
         }
         return logits;
@@ -324,7 +330,11 @@ function SuppressTokens(suppress_tokens) {
     };
 }
 
-function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_index) {
+function ApplyTimestampRules(
+    tokenizer,
+    sample_begin,
+    max_initial_timestamp_index
+) {
     this.tokenizer = tokenizer;
     this.sample_begin = sample_begin;
     this.max_initial_timestamp_index = max_initial_timestamp_index;
@@ -332,7 +342,8 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
     this.apply = function (logits, tokens) {
         // suppress <|notimestamps|> which is handled by without_timestamps
         if (this.tokenizer.no_timestamps() != null) {
-            logits.data[this.tokenizer.no_timestamps()] = Number.NEGATIVE_INFINITY;
+            logits.data[this.tokenizer.no_timestamps()] =
+                Number.NEGATIVE_INFINITY;
         }
 
         // timestamps have to appear in pairs, except directly before EOT; mask logits accordingly
@@ -341,8 +352,12 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
         for (let i = 0; i < sampled_tokens.length; i++) {
             seq.push(sampled_tokens[i]);
         }
-        let last_was_timestamp = seq.length >= 1 && seq.slice(-1)[0] >= this.tokenizer.timestamp_begin;
-        let penultimate_was_timestamp = seq.length < 2 || seq.slice(-2)[0] >= this.tokenizer.timestamp_begin;
+        let last_was_timestamp =
+            seq.length >= 1 &&
+            seq.slice(-1)[0] >= this.tokenizer.timestamp_begin;
+        let penultimate_was_timestamp =
+            seq.length < 2 ||
+            seq.slice(-2)[0] >= this.tokenizer.timestamp_begin;
 
         if (last_was_timestamp) {
             if (penultimate_was_timestamp) {
@@ -366,7 +381,11 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
         }
         if (timestamps.length > 0) {
             // timestamps shouldn't decrease; forbid timestamp tokens smaller than the last
-            for (let i = this.tokenizer.timestamp_begin(); i < timestamps.slice(-1)[0]; i++) {
+            for (
+                let i = this.tokenizer.timestamp_begin();
+                i < timestamps.slice(-1)[0];
+                i++
+            ) {
                 logits.data[i] = Number.NEGATIVE_INFINITY;
             }
         }
@@ -378,7 +397,9 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
             }
             if (this.max_initial_timestamp_index != null) {
                 // apply the `max_initial_timestamp` option
-                let last_allowed = this.tokenizer.timestamp_begin() + this.max_initial_timestamp_index;
+                let last_allowed =
+                    this.tokenizer.timestamp_begin() +
+                    this.max_initial_timestamp_index;
                 for (let i = last_allowed + 1; i < logits.size(); i++) {
                     logits.data[i] = Number.NEGATIVE_INFINITY;
                 }
@@ -390,8 +411,12 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
             logprob.push(Math.log(logits.data[i]));
         }
         logprobs.push(logprob);
-        let timestamp_logprob = logprobs.slice(this.tokenizer.timestamp_begin()).reduce((a, b) => a + b, 0);
-        let max_text_token_logprob = max(logprobs.slice(0, this.tokenizer.timestamp_begin()));
+        let timestamp_logprob = logprobs
+            .slice(this.tokenizer.timestamp_begin())
+            .reduce((a, b) => a + b, 0);
+        let max_text_token_logprob = max(
+            logprobs.slice(0, this.tokenizer.timestamp_begin())
+        );
         if (timestamp_logprob > max_text_token_logprob) {
             for (let i = 0; i < this.tokenizer.timestamp_begin(); i++) {
                 logits.data[i] = Number.NEGATIVE_INFINITY;
@@ -403,21 +428,32 @@ function ApplyTimestampRules(tokenizer, sample_begin, max_initial_timestamp_inde
 function DecodingTask(model, options) {
     this.model = model;
     let language = options.language || "en";
-    this.tokenizer = get_tokenizer(model.is_multilingual, language, options.task);
+    this.tokenizer = get_tokenizer(
+        model.is_multilingual,
+        language,
+        options.task
+    );
     this._verify_options = function (options) {
         if (options.beam_size !== null && options.best_of !== null) {
             throw new Error("beam_size and best_of can't be given together");
         }
         if (options.temperature == 0) {
             if (options.best_of !== null) {
-                throw new Error("best_of with greedy sampling (T=0) is not compatible");
+                throw new Error(
+                    "best_of with greedy sampling (T=0) is not compatible"
+                );
             }
         }
         if (options.patience !== null && options.beam_size === null) {
             throw new Error("patience requires beam_size to be given");
         }
-        if (options.length_penalty !== null && !(0 <= options.length_penalty <= 1)) {
-            throw new Error("length_penalty (alpha) should be a value between 0 and 1");
+        if (
+            options.length_penalty !== null &&
+            !(0 <= options.length_penalty <= 1)
+        ) {
+            throw new Error(
+                "length_penalty (alpha) should be a value between 0 and 1"
+            );
         }
         return options;
     };
@@ -453,7 +489,10 @@ function DecodingTask(model, options) {
             } else {
                 prompt_tokens = prompt;
             }
-            tokens = [this.tokenizer.sot_prev].concat(prompt_tokens.slice(-(this.n_ctx / 2 - 1)), tokens);
+            tokens = [this.tokenizer.sot_prev].concat(
+                prompt_tokens.slice(-(this.n_ctx / 2 - 1)),
+                tokens
+            );
         }
         return tokens;
     };
@@ -465,27 +504,36 @@ function DecodingTask(model, options) {
     this.decoder = new GreedyDecoder(options.temperature, this.tokenizer.eot());
     this.logit_filters = [];
     if (this.options.suppress_blank) {
-        this.logit_filters.push(new SuppressBlank(model.tokenizer, this.sample_begin));
+        this.logit_filters.push(
+            new SuppressBlank(model.tokenizer, this.sample_begin)
+        );
     }
     this._get_suppress_tokens = function () {
         let suppress_tokens = this.options.suppress_tokens;
         if (typeof suppress_tokens === "string") {
-            suppress_tokens = suppress_tokens.split(",").map((t) => parseInt(t));
+            suppress_tokens = suppress_tokens
+                .split(",")
+                .map((t) => parseInt(t));
         }
         if (suppress_tokens.includes(-1)) {
             suppress_tokens = suppress_tokens.filter((t) => t >= 0);
-            suppress_tokens = suppress_tokens.concat(this.tokenizer.non_speech_tokens());
+            suppress_tokens = suppress_tokens.concat(
+                this.tokenizer.non_speech_tokens()
+            );
         } else if (suppress_tokens === null || suppress_tokens.length === 0) {
             suppress_tokens = []; // interpret empty string as an empty list
         } else {
-            console.assert(Array.isArray(suppress_tokens), "suppress_tokens must be a list");
+            console.assert(
+                Array.isArray(suppress_tokens),
+                "suppress_tokens must be a list"
+            );
         }
         suppress_tokens = suppress_tokens.concat([
             this.tokenizer.transcribe(),
             this.tokenizer.translate(),
             this.tokenizer.sot(),
             this.tokenizer.sot_prev(),
-            this.tokenizer.sot_lm()
+            this.tokenizer.sot_lm(),
         ]);
         if (this.tokenizer.no_speech !== null) {
             // no-speech probability is collected separately
@@ -494,16 +542,24 @@ function DecodingTask(model, options) {
         return Array.from(new Set(suppress_tokens)).sort();
     };
     if (this.options.suppress_tokens) {
-        this.logit_filters.push(new SuppressTokens(this._get_suppress_tokens()));
+        this.logit_filters.push(
+            new SuppressTokens(this._get_suppress_tokens())
+        );
     }
     if (!options.without_timestamps) {
-        let precision = CHUNK_LENGTH / model.dims.n_audio_ctx; // usually 0.02 seconds
+        let precision = this.model.chunk_length / model.dims.n_audio_ctx; // usually 0.02 seconds
         let max_initial_timestamp_index = null;
         if (options.max_initial_timestamp) {
-            max_initial_timestamp_index = Math.round(this.options.max_initial_timestamp / precision);
+            max_initial_timestamp_index = Math.round(
+                this.options.max_initial_timestamp / precision
+            );
         }
         this.logit_filters.push(
-            new ApplyTimestampRules(this.tokenizer, this.sample_begin, max_initial_timestamp_index)
+            new ApplyTimestampRules(
+                this.tokenizer,
+                this.sample_begin,
+                max_initial_timestamp_index
+            )
         );
     }
     this._get_initial_tokens = function () {
@@ -530,35 +586,60 @@ function DecodingTask(model, options) {
             } else {
                 prompt_tokens = prompt;
             }
-            tokens = [this.tokenizer.sot_prev].concat(prompt_tokens.slice(-(this.n_ctx / 2 - 1)), tokens);
+            tokens = [this.tokenizer.sot_prev].concat(
+                prompt_tokens.slice(-(this.n_ctx / 2 - 1)),
+                tokens
+            );
         }
         return tokens;
     };
 
     this._get_audio_features = async function (mel) {
         let audio_features = null;
-        if (mel.shape.slice(-2) == [this.model.dims.n_audio_ctx, this.model.dims.n_audio_state]) {
+        if (
+            mel.shape.slice(-2) ==
+            [this.model.dims.n_audio_ctx, this.model.dims.n_audio_state]
+        ) {
             // encoded audio features are given; skip audio encoding
             audio_features = mel;
-            audio_features = new Tensor(audio_features.dims, audio_features.dtype, audio_features.data);
+            audio_features = new Tensor(
+                audio_features.dims,
+                audio_features.dtype,
+                audio_features.data
+            );
         } else {
             audio_features = await this.model.encoder(mel);
-            audio_features = new Tensor(audio_features.shape, "float32", audio_features.data);
+            audio_features = new Tensor(
+                audio_features.shape,
+                "float32",
+                audio_features.data
+            );
         }
         return audio_features;
     };
 
     this._detect_language = async function (audio_features, tokens) {
-        let languages = new Array(audio_features.shape[0]).fill(this.options.language);
+        let languages = new Array(audio_features.shape[0]).fill(
+            this.options.language
+        );
         let lang_tokens = null;
         let lang_probs = null;
         if (this.options.language === null || this.options.task === "lang_id") {
-            [lang_tokens, lang_probs] = await this.model.detect_language(audio_features, this.tokenizer);
+            [lang_tokens, lang_probs] = await this.model.detect_language(
+                audio_features,
+                this.tokenizer
+            );
             languages = lang_probs.map((probs) => {
-                return Object.keys(probs).reduce((a, b) => (probs[a] > probs[b] ? a : b));
+                return Object.keys(probs).reduce((a, b) =>
+                    probs[a] > probs[b] ? a : b
+                );
             });
             if (this.model.debug) {
-                console.log("[DEBUG] Detected language:", languages, lang_probs);
+                console.log(
+                    "[DEBUG] Detected language:",
+                    languages,
+                    lang_probs
+                );
             }
             if (this.options.language == null) {
                 tokens.data[this.sot_index + 1] = lang_tokens;
@@ -580,11 +661,20 @@ function DecodingTask(model, options) {
             if (i == 0) {
                 for (let j = 0; j < tokens.shape[1]; j++) {
                     if (j == 0) {
-                        let tmp = await this.inference.logits(tokens.slice2d(j, j + 1), audio_features);
-                        logits = new Tensor([tmp.shape[0], tokens.shape[1], tmp.shape[2]], tmp.dtype);
+                        let tmp = await this.inference.logits(
+                            tokens.slice2d(j, j + 1),
+                            audio_features
+                        );
+                        logits = new Tensor(
+                            [tmp.shape[0], tokens.shape[1], tmp.shape[2]],
+                            tmp.dtype
+                        );
                         logits.data.set(tmp.data, 0);
                     } else {
-                        let tmp = await this.inference.logits(tokens.slice2d(j, j + 1), audio_features);
+                        let tmp = await this.inference.logits(
+                            tokens.slice2d(j, j + 1),
+                            audio_features
+                        );
                         logits.data.set(tmp.data, tmp.size() * j);
                     }
                 }
@@ -596,13 +686,22 @@ function DecodingTask(model, options) {
                     .reshape([logits.shape[1], logits.shape[2]])
                     .slice(this.sot_index, this.sot_index + 1)
                     .softmax2d();
-                no_speech_probs = probs_at_sot.slice2d(this.tokenizer.no_speech(), this.tokenizer.no_speech() + 1);
+                no_speech_probs = probs_at_sot.slice2d(
+                    this.tokenizer.no_speech(),
+                    this.tokenizer.no_speech() + 1
+                );
             }
-            logits = logits.reshape([logits.shape[1], logits.shape[2]]).slice(logits.shape[1] - 1, logits.shape[1]);
+            logits = logits
+                .reshape([logits.shape[1], logits.shape[2]])
+                .slice(logits.shape[1] - 1, logits.shape[1]);
             for (let logit_filter of this.logit_filters) {
                 logit_filter.apply(logits, tokens);
             }
-            [tokens, completed] = await this.decoder.update(tokens, logits, sum_logprobs);
+            [tokens, completed] = await this.decoder.update(
+                tokens,
+                logits,
+                sum_logprobs
+            );
             if (completed || tokens.shape[1] > this.n_ctx) {
                 break;
             }
@@ -610,7 +709,7 @@ function DecodingTask(model, options) {
         return [
             tokens,
             new Tensor([n_batch], "float32", sum_logprobs),
-            new Tensor([n_batch], "float32", no_speech_probs)
+            new Tensor([n_batch], "float32", no_speech_probs),
         ];
     };
 
@@ -618,8 +717,15 @@ function DecodingTask(model, options) {
         //this.decoder.reset();
         let n_audio = mel.shape[0];
         let audio_features = await this._get_audio_features(mel);
-        let tokens = new Tensor([1, this.initial_tokens.length], "int32", new Int32Array(this.initial_tokens));
-        let [languages, language_probs] = await this._detect_language(audio_features, tokens);
+        let tokens = new Tensor(
+            [1, this.initial_tokens.length],
+            "int32",
+            new Int32Array(this.initial_tokens)
+        );
+        let [languages, language_probs] = await this._detect_language(
+            audio_features,
+            tokens
+        );
         if (this.options.task == "lang_id") {
             let results = [];
             for (let i = 0; i < audio_features.length; i++) {
@@ -634,12 +740,20 @@ function DecodingTask(model, options) {
             return results;
         }
         let sum_logprobs, no_speech_probs;
-        [tokens, sum_logprobs, no_speech_probs] = await this._main_loop(audio_features, tokens);
-        console.assert((audio_features.shape[0] == no_speech_probs.shape[0]) == n_audio);
+        [tokens, sum_logprobs, no_speech_probs] = await this._main_loop(
+            audio_features,
+            tokens
+        );
+        console.assert(
+            (audio_features.shape[0] == no_speech_probs.shape[0]) == n_audio
+        );
         tokens = tokens.reshape([n_audio, 1, tokens.shape[1]]);
         sum_logprobs = sum_logprobs.reshape([n_audio, this.n_group]);
         let _tokens;
-        [_tokens, sum_logprobs] = await this.decoder.finalize(tokens, sum_logprobs);
+        [_tokens, sum_logprobs] = await this.decoder.finalize(
+            tokens,
+            sum_logprobs
+        );
         tokens = [];
         for (let i = 0; i < _tokens.shape[0]; i++) {
             let s = _tokens.data;
@@ -681,22 +795,46 @@ function DecodingTask(model, options) {
     };
 }
 
-export function Whisper(debug = false) {
+export function Whisper(
+    preprocessorModelUrl,
+    encoderModelUrl,
+    decoderModelUrl,
+    positionalEmbeddingUrl,
+    chunk_length = 30,
+    debug = false
+) {
     this.debug = debug;
-    //this.encoderSession = ort.InferenceSession.create(encoderWebglModelUrl, { executionProviders: ["webgl"] });
-    this.encoderSession = ort.InferenceSession.create(encoderWasmModelUrl, { executionProviders: ["cpu"] });
-    //this.decoderSession = ort.InferenceSession.create(decoderWebglModelUrl, { executionProviders: ["webgl"] });
-    this.decoderSession = ort.InferenceSession.create(decoderWasmModelUrl, { executionProviders: ["cpu"] });
-    //this.preprocessorSession = ort.InferenceSession.create(preprocessorWebglModelUrl, {
-    //executionProviders: ["webgl"]
-    //});
-    this.preprocessorSession = ort.InferenceSession.create(preprocessorWasmModelUrl, {
-        executionProviders: ["cpu"]
+    this.encoderSession = ort.InferenceSession.create(encoderModelUrl, {
+        executionProviders: ["cpu"],
     });
-    this.positional_embedding = positional_embedding;
+    this.decoderSession = ort.InferenceSession.create(decoderModelUrl, {
+        executionProviders: ["cpu"],
+    });
+    this.preprocessorSession = ort.InferenceSession.create(
+        preprocessorModelUrl,
+        {
+            executionProviders: ["cpu"],
+        }
+    );
+    this.chunk_length = chunk_length;
+    this.sample_rate = 16000;
+    this.positional_embedding = fetch(positionalEmbeddingUrl, {})
+        .then((response) => response.arrayBuffer())
+        .then((buffer) => {
+            buffer = new Float32Array(buffer);
+            let array = [];
+            for (let i = 0; i < 448; i++) {
+                let row = [];
+                for (let j = 0; j < 512; j++) {
+                    row.push(buffer[i * 512 + j]);
+                }
+                array.push(row);
+            }
+            return array;
+        });
     this.dims = {};
     this.dims.n_mels = 80;
-    this.dims.n_audio_ctx = 1500;
+    this.dims.n_audio_ctx = chunk_length * 50;
     this.dims.n_audio_state = 512;
     this.dims.n_audio_head = 8;
     this.dims.n_audio_layer = 6;
@@ -707,22 +845,30 @@ export function Whisper(debug = false) {
     this.dims.n_text_layer = 6;
     this.self_attn_key_cache = new ort.Tensor(
         "float32",
-        Float32Array.from(new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)),
+        Float32Array.from(
+            new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)
+        ),
         [this.dims.n_audio_layer, 1, this.dims.n_audio_state]
     );
     this.self_attn_value_cache = new ort.Tensor(
         "float32",
-        Float32Array.from(new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)),
+        Float32Array.from(
+            new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)
+        ),
         [this.dims.n_audio_layer, 1, this.dims.n_audio_state]
     );
     this.cross_attn_key_cache = new ort.Tensor(
         "float32",
-        Float32Array.from(new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)),
+        Float32Array.from(
+            new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)
+        ),
         [this.dims.n_audio_layer, 1, this.dims.n_audio_state]
     );
     this.cross_attn_value_cache = new ort.Tensor(
         "float32",
-        Float32Array.from(new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)),
+        Float32Array.from(
+            new Array(this.dims.n_audio_layer * this.dims.n_audio_state).fill(0)
+        ),
         [this.dims.n_audio_layer, 1, this.dims.n_audio_state]
     );
 
@@ -733,14 +879,23 @@ export function Whisper(debug = false) {
             start = performance.now();
             console.log("[DEBUG] Encoding started with input:", input);
         }
-        let output = await this.encoderSession.then((session) => session.run(input));
+        let output = await this.encoderSession.then((session) =>
+            session.run(input)
+        );
         this.cross_attn_key_cache = output.key_cache;
         this.cross_attn_value_cache = output.value_cache;
         if (this.debug) {
             end = performance.now();
-            console.log(`[DEBUG] Encoding finished in ${end - start}[ms] with output:`, output);
+            console.log(
+                `[DEBUG] Encoding finished in ${end - start}[ms] with output:`,
+                output
+            );
         }
-        return new Tensor(output.output.dims, output.output.dtype, output.output.data);
+        return new Tensor(
+            output.output.dims,
+            output.output.dtype,
+            output.output.data
+        );
     };
 
     this.decoder = async function (
@@ -752,67 +907,73 @@ export function Whisper(debug = false) {
         positional_embedding
     ) {
         let input = {
-            input_token: new ort.Tensor("int32", tokens.data, [1, tokens.shape[1]]),
+            input_token: new ort.Tensor("int32", tokens.data, [
+                1,
+                tokens.shape[1],
+            ]),
             self_key_cache: self_attn_key_cache,
             self_value_cache: self_attn_value_cache,
             cross_key_cache: cross_attn_key_cache,
             cross_value_cache: cross_attn_value_cache,
-            positional_embedding: new ort.Tensor("float32", new Float32Array(positional_embedding.flat()), [
-                positional_embedding.length,
-                positional_embedding[0].length
-            ])
+            positional_embedding: new ort.Tensor(
+                "float32",
+                new Float32Array(positional_embedding.flat()),
+                [positional_embedding.length, positional_embedding[0].length]
+            ),
         };
         let start, end;
         if (this.debug) {
             start = performance.now();
             console.log("[DEBUG] Decoding started with input:", input);
         }
-        let output = await this.decoderSession.then((session) => session.run(input));
+        let output = await this.decoderSession.then((session) =>
+            session.run(input)
+        );
         if (this.debug) {
             end = performance.now();
-            console.log(`[DEBUG] Decoding finished in ${end - start}[ms] with output:`, output);
+            console.log(
+                `[DEBUG] Decoding finished in ${end - start}[ms] with output:`,
+                output
+            );
         }
-        return [new Tensor(output.output.dims, "float32", output.output.data), output.key_cache, output.value_cache];
+        return [
+            new Tensor(output.output.dims, "float32", output.output.data),
+            output.key_cache,
+            output.value_cache,
+        ];
     };
 
     this.preprocessor = async function (x) {
         let input = { input: new ort.Tensor(x.dtype, x.data, x.shape) };
         let start, end;
-        console.log(navigator.gpu);
-        //if (!navigator.gpu) {
-        //console.log("no webgpu");
-        //}
         if (this.debug) {
             start = performance.now();
             console.log("[DEBUG] Preprocess started with input:", input);
         }
-        let output = await this.preprocessorSession.then((session) => session.run(input));
+        let output = await this.preprocessorSession.then((session) =>
+            session.run(input)
+        );
         if (this.debug) {
             end = performance.now();
-            console.log(`[DEBUG] Preprocess finished in ${end - start}[ms] with output:`, output);
+            console.log(
+                `[DEBUG] Preprocess finished in ${
+                    end - start
+                }[ms] with output:`,
+                output
+            );
         }
-        //const [modelBytes] = await Promise.all([
-        //fetch(preprocessorWebglModelUrl).then((response) => response.arrayBuffer()),
-        //init()
-        //]);
-        //console.log("check1", modelBytes);
-        //const response = await fetch(preprocessorWebglModelUrl);
-        //const buffer = await response.arrayBuffer();
-        //const session = await Session.fromBytes(modelBytes);
-        //console.log("check2");
-        //input = Input();
-        //input.insert("input", buffer);
-        //const result = await session.run(input);
-        //console.log("buffer", buffer);
-        //console.log("result", result);
-        //session.free();
-        //input.free();
-        return new Tensor(output.output.dims, output.output.dtype, output.output.data);
+        return new Tensor(
+            output.output.dims,
+            output.output.dtype,
+            output.output.data
+        );
     };
 
     this.logits = async function (tokens) {
         let offset = this.model.self_attn_value_cache.shape[1] - 1;
-        let positional_embedding = this.model.positional_embedding.slice(offset, offset + tokens.shape[1]);
+        let positional_embedding = (
+            await this.model.positional_embedding
+        ).slice(offset, offset + tokens.shape[1]);
         let [l, k, v] = await this.decoder(
             tokens,
             this.self_attn_key_cache,
@@ -828,7 +989,11 @@ export function Whisper(debug = false) {
 
     this.detection_logits = async function (tokens) {
         let offset = this.self_attn_value_cache.dims[1] - 1;
-        let positional_embedding = this.positional_embedding.slice(offset, offset + tokens.shape[1]);
+        console.log("pe", this.positional_embedding);
+        let positional_embedding = (await this.positional_embedding).slice(
+            offset,
+            offset + tokens.shape[1]
+        );
         let [l] = await this.decoder(
             tokens,
             this.self_attn_key_cache,
@@ -848,20 +1013,23 @@ export function Whisper(debug = false) {
         if (tokenizer == null) {
             tokenizer = get_tokenizer(this.is_multilingual());
         }
-        //if (tokenizer.language == null || !(tokenizer.language_token in tokenizer.sot_sequence)) {
-        //console.assert(false, "This model doesn't have language tokens so it can't perform lang id");
-        //}
         let single = mel.shape.length == 2;
         if (single) {
             mel = mel.reshape([1, mel.shape[0], mel.shape[1]]);
         }
 
         let n_audio = mel.shape[0];
-        let x = new Tensor([1, n_audio], "int32", new Int32Array(n_audio).fill(tokenizer.sot()));
+        let x = new Tensor(
+            [1, n_audio],
+            "int32",
+            new Int32Array(n_audio).fill(tokenizer.sot())
+        );
         let logits = await this.detection_logits(x);
         logits = logits.reshape([1, logits.shape[2]]);
 
-        let mask = new ort.Tensor("bool", new Array(logits.shape[1]).fill(1), [logits.shape[1]]);
+        let mask = new ort.Tensor("bool", new Array(logits.shape[1]).fill(1), [
+            logits.shape[1],
+        ]);
         let indices = tokenizer.all_language_tokens();
         let all_language_tokens = indices;
         let all_language_codes = tokenizer.all_language_codes();
@@ -902,29 +1070,37 @@ export function Whisper(debug = false) {
             .then((decoded) => {
                 let audio = decoded;
                 let buffer = Float32Array.from(new Array(audio.length).fill(0));
-                //for (let i = 0; i < audio.numberOfChannels; i++) {
-                //let channel = audio.getChannelData(i);
-                let channel = audio.getChannelData(0);
-                for (let j = 0; j < channel.length; j++) {
-                    buffer[j] = channel[j];
+                if (audio.numberOfChannels > 1) {
+                    let channel0 = audio.getChannelData(0);
+                    let channel1 = audio.getChannelData(1);
+                    for (let j = 0; j < channel0.length; j++) {
+                        buffer[j] = (channel0[j] + channel1[j]) / 2;
+                    }
+                } else {
+                    let channel = audio.getChannelData(0);
+                    for (let j = 0; j < channel.length; j++) {
+                        buffer[j] = channel[j];
+                    }
                 }
-                //}
                 return buffer;
             });
         return new Tensor([audioBuffer.length], "float32", audioBuffer);
     };
 
     // tensor: [n_samples]
-    this.pad_or_trim = function (tensor, length = N_SAMPLES) {
+    this.pad_or_trim = function (tensor, length) {
+        if (length == null) {
+            length = this.chunk_length * this.sample_rate;
+        }
         if (tensor.size() > length) {
             tensor = tensor.slice(0, length);
         }
         if (tensor.size() < length) {
-            //tensor = tensor.concat(new Array(length - array.length).fill(0));
             tensor = tensor.pad(length - tensor.shape[0]);
         }
         return tensor;
     };
+
     this.decode = function (mel, options) {
         if (mel.shape.length == 2) {
             mel = mel.reshape([1, mel.shape[0], mel.shape[1]]);

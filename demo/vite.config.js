@@ -1,10 +1,25 @@
 import { defineConfig } from "vite";
+import path from "path";
 import react from "@vitejs/plugin-react";
 
-// https://vitejs.dev/config/
 export default defineConfig({
     server: { open: true },
     plugins: [react()],
-    assetsInclude: ["**/*.onnx", "**/vocab.json", "**/*.wasm"],
-    build: { sourcemap: true }
+    assetsInclude: [
+        "**/*.onnx",
+        "**/vocab.json",
+        "**/*.wasm",
+        "**/*.gz",
+    ],
+    resolve: {
+        alias: {
+            "@core": path.resolve(__dirname, "../src"),
+            "@models": path.resolve(__dirname, "../models"),
+        },
+        modules: [
+            path.resolve(__dirname, "../src/node_modules"),
+            "node_nodules",
+        ],
+    },
+    build: { sourcemap: true },
 });

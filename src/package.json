@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "onnxruntime-web": "^1.14.0",
+    "pako": "^2.1.0"
+  }
+}
