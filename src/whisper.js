@@ -1,7 +1,6 @@
 import * as ort from "onnxruntime-web";
 import { get_tokenizer } from "./tokenizer";
 import pako from "pako";
-import { positional_embedding } from "./positional_embedding";
 
 function DecodingResult(
     audio_features,
@@ -25,7 +24,7 @@ function DecodingResult(
     this.compression_ratio = compression_ratio;
 }
 
-function Tensor(shape, dtype, data) {
+export function Tensor(shape, dtype, data) {
     this.shape = shape;
     if (data === null || data === undefined) {
         if (dtype === undefined) {
@@ -354,10 +353,10 @@ function ApplyTimestampRules(
         }
         let last_was_timestamp =
             seq.length >= 1 &&
-            seq.slice(-1)[0] >= this.tokenizer.timestamp_begin;
+            seq.slice(-1)[0] >= this.tokenizer.timestamp_begin();
         let penultimate_was_timestamp =
             seq.length < 2 ||
-            seq.slice(-2)[0] >= this.tokenizer.timestamp_begin;
+            seq.slice(-2)[0] >= this.tokenizer.timestamp_begin();
 
         if (last_was_timestamp) {
             if (penultimate_was_timestamp) {
@@ -379,11 +378,26 @@ function ApplyTimestampRules(
                 timestamps.push(sampled_tokens.data[i]);
             }
         }
+        console.log("timestamps", timestamps);
         if (timestamps.length > 0) {
             // timestamps shouldn't decrease; forbid timestamp tokens smaller than the last
             for (
                 let i = this.tokenizer.timestamp_begin();
                 i < timestamps.slice(-1)[0];
+                i++
+            ) {
+                logits.data[i] = Number.NEGATIVE_INFINITY;
+            }
+            // to force that timestamps are strictly increasing
+            let timestamp_last;
+            if (last_was_timestamp && !penultimate_was_timestamp) {
+                timestamp_last = timestamps.slice(-1)[0];
+            } else {
+                timestamp_last = timestamps.slice(-1)[0] + 1;
+            }
+            for (
+                let i = this.tokenizer.timestamp_begin();
+                i < timestamp_last;
                 i++
             ) {
                 logits.data[i] = Number.NEGATIVE_INFINITY;
@@ -408,12 +422,16 @@ function ApplyTimestampRules(
         let logprobs = [];
         let logprob = [];
         for (let i = 0; i < logits.size(); i++) {
-            logprob.push(Math.log(logits.data[i]));
+            logprob.push(logits.data[i]);
         }
+        logprob = softmax(logprob);
+        logprob = logprob.map((x) => Math.log(x));
+
         logprobs.push(logprob);
-        let timestamp_logprob = logprobs
+        let timestamp_logprob = Math.log(logprobs
             .slice(this.tokenizer.timestamp_begin())
-            .reduce((a, b) => a + b, 0);
+            .map((x) => Math.exp(x))
+            .reduce((a, b) => a + b, 0));
         let max_text_token_logprob = max(
             logprobs.slice(0, this.tokenizer.timestamp_begin())
         );
@@ -489,7 +507,7 @@ function DecodingTask(model, options) {
             } else {
                 prompt_tokens = prompt;
             }
-            tokens = [this.tokenizer.sot_prev].concat(
+            tokens = [this.tokenizer.sot_prev()].concat(
                 prompt_tokens.slice(-(this.n_ctx / 2 - 1)),
                 tokens
             );
@@ -535,7 +553,7 @@ function DecodingTask(model, options) {
             this.tokenizer.sot_prev(),
             this.tokenizer.sot_lm(),
         ]);
-        if (this.tokenizer.no_speech !== null) {
+        if (this.tokenizer.no_speech() !== null) {
             // no-speech probability is collected separately
             suppress_tokens.push(this.tokenizer.no_speech());
         }
@@ -586,7 +604,7 @@ function DecodingTask(model, options) {
             } else {
                 prompt_tokens = prompt;
             }
-            tokens = [this.tokenizer.sot_prev].concat(
+            tokens = [this.tokenizer.sot_prev()].concat(
                 prompt_tokens.slice(-(this.n_ctx / 2 - 1)),
                 tokens
             );
@@ -702,6 +720,7 @@ function DecodingTask(model, options) {
                 logits,
                 sum_logprobs
             );
+            console.log("tokens", tokens, completed, this.n_ctx);
             if (completed || tokens.shape[1] > this.n_ctx) {
                 break;
             }
@@ -804,18 +823,27 @@ export function Whisper(
     debug = false
 ) {
     this.debug = debug;
-    this.encoderSession = ort.InferenceSession.create(encoderModelUrl, {
-        executionProviders: ["cpu"],
-    });
-    this.decoderSession = ort.InferenceSession.create(decoderModelUrl, {
-        executionProviders: ["cpu"],
-    });
-    this.preprocessorSession = ort.InferenceSession.create(
-        preprocessorModelUrl,
-        {
-            executionProviders: ["cpu"],
-        }
-    );
+    this.encoderSession = fetch(encoderModelUrl)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) =>
+            ort.InferenceSession.create(buffer, {
+                executionProviders: ["cpu"],
+            })
+        );
+    this.decoderSession = fetch(decoderModelUrl)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) =>
+            ort.InferenceSession.create(buffer, {
+                executionProviders: ["cpu"],
+            })
+        );
+    this.preprocessorSession = fetch(preprocessorModelUrl)
+        .then((response) => response.arrayBuffer())
+        .then((buffer) =>
+            ort.InferenceSession.create(buffer, {
+                executionProviders: ["cpu"],
+            })
+        );
     this.chunk_length = chunk_length;
     this.sample_rate = 16000;
     this.positional_embedding = fetch(positionalEmbeddingUrl, {})
@@ -989,7 +1017,6 @@ export function Whisper(
 
     this.detection_logits = async function (tokens) {
         let offset = this.self_attn_value_cache.dims[1] - 1;
-        console.log("pe", this.positional_embedding);
         let positional_embedding = (await this.positional_embedding).slice(
             offset,
             offset + tokens.shape[1]
@@ -1101,12 +1128,12 @@ export function Whisper(
         return tensor;
     };
 
-    this.decode = function (mel, options) {
+    this.decode = async function (mel, options) {
         if (mel.shape.length == 2) {
             mel = mel.reshape([1, mel.shape[0], mel.shape[1]]);
         }
         let task = new DecodingTask(this, options);
-        let result = task.run(mel);
+        let result = await task.run(mel);
         return result[0];
     };
 }
