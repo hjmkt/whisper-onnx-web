@@ -45,14 +45,11 @@ class WhisperProcessor extends AudioWorkletProcessor {
         for (let i = 0; i < input[0].length; i++) {
             this.buffer.push(input[0][i]);
         }
-        if (
-            this.buffer.length >= (this.chunkLength - 0) * 16000 &&
-            this.first
-        ) {
+        if (this.buffer.length >= this.chunkLength * 16000 && this.first) {
             this.port.postMessage(
-                this.buffer.slice(0, (this.chunkLength - 0) * 16000)
+                this.buffer.slice(0, this.chunkLength * 16000)
             );
-            this.buffer = this.buffer.slice((this.chunkLength - 0) * 16000);
+            this.buffer = this.buffer.slice(this.chunkLength * 8000);
             this.first = false;
         }
         //for (let channel = 0; channel < input.length; ++channel) {

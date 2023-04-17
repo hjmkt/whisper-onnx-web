@@ -259,11 +259,13 @@ function MaximumLikelihoodRanker(length_penalty) {
 function GreedyDecoder(temperature, eot) {
     this.temperature = temperature;
     this.eot = eot;
+    //console.log("gd eot", this.eot);
 
     this.update = function (tokens, logits, sum_logprobs) {
         let next_tokens = null;
         next_tokens = [logits.data.indexOf(max(logits.data))];
 
+        //console.log("update logits", logits);
         let logprobs = logits.log_softmax2d();
         let current_logprobs = [logprobs.data[next_tokens[0]]];
         if (tokens.data.slice(-1)[0] != this.eot) {
@@ -284,6 +286,7 @@ function GreedyDecoder(temperature, eot) {
         tokens = new_tokens;
 
         let completed = tokens.slice(-1)[0] == this.eot;
+        //console.log("completed", completed);
         tokens = new Tensor(
             [1, tokens.length],
             "int32",
@@ -293,12 +296,19 @@ function GreedyDecoder(temperature, eot) {
     };
 
     this.finalize = function (tokens, sum_logprobs) {
+        //console.log("pre finalize", JSON.stringify(tokens));
         // make sure each sequence has at least one EOT token at the end
-        for (let i = 0; i < tokens.length; i++) {
-            for (let j = 0; j < tokens[i].length; j++) {
-                tokens[i][j].push(this.eot);
-            }
-        }
+        //for (let i = 0; i < tokens.length; i++) {
+        //for (let j = 0; j < tokens[i].length; j++) {
+        //tokens[i][j].push(this.eot);
+        //}
+        //}
+        let newBuffer = new Int32Array(tokens.size() + 1);
+        newBuffer.set(tokens.data);
+        newBuffer[tokens.size()] = this.eot;
+        tokens.shape[2] += 1;
+        tokens.data = newBuffer;
+        //console.log("post finalize", JSON.stringify(tokens));
         return [tokens, sum_logprobs];
     };
 }
@@ -378,7 +388,7 @@ function ApplyTimestampRules(
                 timestamps.push(sampled_tokens.data[i]);
             }
         }
-        console.log("timestamps", timestamps);
+        //console.log("timestamps", timestamps);
         if (timestamps.length > 0) {
             // timestamps shouldn't decrease; forbid timestamp tokens smaller than the last
             for (
@@ -419,7 +429,6 @@ function ApplyTimestampRules(
                 }
             }
         }
-        let logprobs = [];
         let logprob = [];
         for (let i = 0; i < logits.size(); i++) {
             logprob.push(logits.data[i]);
@@ -427,11 +436,13 @@ function ApplyTimestampRules(
         logprob = softmax(logprob);
         logprob = logprob.map((x) => Math.log(x));
 
-        logprobs.push(logprob);
-        let timestamp_logprob = Math.log(logprobs
-            .slice(this.tokenizer.timestamp_begin())
-            .map((x) => Math.exp(x))
-            .reduce((a, b) => a + b, 0));
+        let logprobs = logprob;
+        let timestamp_logprob = Math.log(
+            logprobs
+                .slice(this.tokenizer.timestamp_begin())
+                .map((x) => Math.exp(x))
+                .reduce((a, b) => a + b, 0)
+        );
         let max_text_token_logprob = max(
             logprobs.slice(0, this.tokenizer.timestamp_begin())
         );
@@ -699,6 +710,7 @@ function DecodingTask(model, options) {
             } else {
                 logits = await this.inference.logits(tokens, audio_features);
             }
+            let no_speech = false;
             if (i == 0 && this.tokenizer.no_speech() !== null) {
                 let probs_at_sot = logits
                     .reshape([logits.shape[1], logits.shape[2]])
@@ -708,6 +720,10 @@ function DecodingTask(model, options) {
                     this.tokenizer.no_speech(),
                     this.tokenizer.no_speech() + 1
                 );
+                console.log("no speech", probs_at_sot, no_speech_probs);
+                if (no_speech_probs.data[0] > 0.1) {
+                    no_speech = true;
+                }
             }
             logits = logits
                 .reshape([logits.shape[1], logits.shape[2]])
@@ -720,7 +736,23 @@ function DecodingTask(model, options) {
                 logits,
                 sum_logprobs
             );
-            console.log("tokens", tokens, completed, this.n_ctx);
+            // if tokens have enough length and the last token is timestamp, force eot
+            if (
+                no_speech ||
+                (tokens.size() >= 40 &&
+                    tokens.data[tokens.data.length - 1] >=
+                        this.tokenizer.timestamp_begin()) ||
+                tokens.size() >= 60
+            ) {
+                //console.log("token complete");
+                // push eot to tokens
+                let newTokens = new Int32Array(tokens.data.length + 1);
+                newTokens.set(tokens.data);
+                newTokens[tokens.data.length] = this.tokenizer.eot();
+                tokens.shape[1] += 1;
+                tokens = new Tensor(tokens.shape, tokens.dtype, newTokens);
+                completed = true;
+            }
             if (completed || tokens.shape[1] > this.n_ctx) {
                 break;
             }
@@ -773,6 +805,7 @@ function DecodingTask(model, options) {
             tokens,
             sum_logprobs
         );
+        console.log("_tokens", _tokens);
         tokens = [];
         for (let i = 0; i < _tokens.shape[0]; i++) {
             let s = _tokens.data;
@@ -801,10 +834,11 @@ function DecodingTask(model, options) {
                 new DecodingResult(
                     audio_features[i],
                     languages[i],
+                    language_probs[i],
                     tokens[i],
                     texts[i],
                     avg_logprobs[i],
-                    no_speech_probs[i],
+                    no_speech_probs,
                     this.options.temperature,
                     compressionRatio(texts[i])
                 )
@@ -815,9 +849,10 @@ function DecodingTask(model, options) {
 }
 
 export function Whisper(
+    model_type,
     preprocessorModelUrl,
     encoderModelUrl,
-    decoderModelUrl,
+    decoderModelUrls,
     positionalEmbeddingUrl,
     chunk_length = 30,
     debug = false
@@ -830,13 +865,27 @@ export function Whisper(
                 executionProviders: ["cpu"],
             })
         );
-    this.decoderSession = fetch(decoderModelUrl)
-        .then((response) => response.arrayBuffer())
-        .then((buffer) =>
-            ort.InferenceSession.create(buffer, {
-                executionProviders: ["cpu"],
-            })
-        );
+    this.decoderSession = Promise.all(
+        decoderModelUrls.map((u) =>
+            fetch(u).then((response) => response.arrayBuffer())
+        )
+    ).then((buffers) => {
+        let n_bytes = 0;
+        for (let i = 0; i < buffers.length; i++) {
+            n_bytes += buffers[i].byteLength;
+        }
+        let buffer = new ArrayBuffer(n_bytes);
+        buffer = new Uint8Array(buffer);
+        let offset = 0;
+        for (let i = 0; i < buffers.length; i++) {
+            let tmp = new Uint8Array(buffers[i]);
+            buffer.set(tmp, offset);
+            offset += buffers[i].byteLength;
+        }
+        return ort.InferenceSession.create(buffer.buffer, {
+            executionProviders: ["cpu"],
+        });
+    });
     this.preprocessorSession = fetch(preprocessorModelUrl)
         .then((response) => response.arrayBuffer())
         .then((buffer) =>
@@ -846,6 +895,13 @@ export function Whisper(
         );
     this.chunk_length = chunk_length;
     this.sample_rate = 16000;
+    this.dims = {};
+    this.dims.n_audio_state = model_type == "base" ? 512 : 768;
+    this.dims.n_text_state = model_type == "base" ? 512 : 768;
+    this.dims.n_audio_head = model_type == "base" ? 6 : 12;
+    this.dims.n_text_head = model_type == "base" ? 6 : 12;
+    this.dims.n_audio_layer = model_type == "base" ? 6 : 12;
+    this.dims.n_text_layer = model_type == "base" ? 6 : 12;
     this.positional_embedding = fetch(positionalEmbeddingUrl, {})
         .then((response) => response.arrayBuffer())
         .then((buffer) => {
@@ -853,24 +909,17 @@ export function Whisper(
             let array = [];
             for (let i = 0; i < 448; i++) {
                 let row = [];
-                for (let j = 0; j < 512; j++) {
-                    row.push(buffer[i * 512 + j]);
+                for (let j = 0; j < this.dims.n_audio_state; j++) {
+                    row.push(buffer[i * this.dims.n_audio_state + j]);
                 }
                 array.push(row);
             }
             return array;
         });
-    this.dims = {};
     this.dims.n_mels = 80;
     this.dims.n_audio_ctx = chunk_length * 50;
-    this.dims.n_audio_state = 512;
-    this.dims.n_audio_head = 8;
-    this.dims.n_audio_layer = 6;
     this.dims.n_vocab = 51865;
     this.dims.n_text_ctx = 448;
-    this.dims.n_text_state = 512;
-    this.dims.n_text_head = 8;
-    this.dims.n_text_layer = 6;
     this.self_attn_key_cache = new ort.Tensor(
         "float32",
         Float32Array.from(
@@ -973,6 +1022,15 @@ export function Whisper(
 
     this.preprocessor = async function (x) {
         let input = { input: new ort.Tensor(x.dtype, x.data, x.shape) };
+        //for (let i = 60000; i < 80000; i++) {
+        //input.input.data[i] *= Math.max(0, (65000 - i) / 5000);
+        //}
+        //for (let i = 0; i < 60000; i++) {
+        //input.input.data[i] = input.input.data[i + 20000];
+        //}
+        //for (let i = 60000; i < 80000; i++) {
+        //input.input.data[i] = 0;
+        //}
         let start, end;
         if (this.debug) {
             start = performance.now();
@@ -1120,7 +1178,7 @@ export function Whisper(
             length = this.chunk_length * this.sample_rate;
         }
         if (tensor.size() > length) {
-            tensor = tensor.slice(0, length);
+            tensor = tensor.slice(tensor.size() - length, tensor.size());
         }
         if (tensor.size() < length) {
             tensor = tensor.pad(length - tensor.shape[0]);
