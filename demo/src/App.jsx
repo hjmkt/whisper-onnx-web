@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
@@ -18,16 +18,84 @@ import decoderBaseModelUrl from "@models/decoder_base_5s_int8.onnx.gz";
 import decoderSmallModelUrl0 from "@models/decoder_small_10s_int8.onnx.0.gz";
 import decoderSmallModelUrl1 from "@models/decoder_small_10s_int8.onnx.1.gz";
 
-async function convert() {
-    let whisper = new Whisper(
-        model_type,
-        preprocessorSmallModelUrl,
-        encoderSmallModelUrl,
-        [decoderSmallModelUrl0, decoderSmallModelUrl1],
-        positionalEmbeddingSmallUrl,
-        CHUNK_LENGTH,
-        true
-    );
+let whisper_pool = {
+    base: [
+        new Whisper(
+            "base",
+            preprocessorBaseModelUrl,
+            encoderBaseModelUrl,
+            [decoderBaseModelUrl],
+            positionalEmbeddingBaseUrl,
+            5,
+            true
+        ),
+        new Whisper(
+            "base",
+            preprocessorBaseModelUrl,
+            encoderBaseModelUrl,
+            [decoderBaseModelUrl],
+            positionalEmbeddingBaseUrl,
+            5,
+            true
+        ),
+    ],
+    small: [
+        new Whisper(
+            "small",
+            preprocessorSmallModelUrl,
+            encoderSmallModelUrl,
+            [decoderSmallModelUrl0, decoderSmallModelUrl1],
+            positionalEmbeddingSmallUrl,
+            10,
+            true
+        ),
+        new Whisper(
+            "small",
+            preprocessorSmallModelUrl,
+            encoderSmallModelUrl,
+            [decoderSmallModelUrl0, decoderSmallModelUrl1],
+            positionalEmbeddingSmallUrl,
+            10,
+            true
+        ),
+    ],
+};
+
+async function getWhisper(model_type) {
+    let whisper = null;
+    while (whisper == null) {
+        for (let m of whisper_pool[model_type]) {
+            if (!m.running) {
+                whisper = m;
+                break;
+            }
+        }
+        if (whisper == null) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+    }
+    return whisper;
+}
+
+function runWhisper(
+    model_type,
+    tensor,
+    textCallback,
+    tokenCallback = () => {}
+) {
+    getWhisper(model_type).then((whisper) => {
+        let audio = whisper.pad_or_trim(tensor);
+        return whisper
+            .preprocessor(audio)
+            .then((mel) => whisper.decode(mel, new DecodingOptions()))
+            .then((result) => {
+                console.log("result", result);
+                textCallback(result.text);
+            });
+    });
+}
+
+async function convert(setText) {
     if (true) {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: false,
@@ -48,16 +116,11 @@ async function convert() {
             node.port.onmessage = (e) => {
                 let buffer = new Float32Array(e.data);
                 let tensor = new Tensor([buffer.length], "float32", buffer);
-                let audio = whisper.pad_or_trim(tensor);
-                whisper
-                    .preprocessor(audio)
-                    .then((mel) => whisper.decode(mel, new DecodingOptions()))
-                    .then((result) => {
-                        console.log("result", result);
-                    });
+                runWhisper("small", tensor, setText);
+                tensor = new Tensor([buffer.length], "float32", buffer);
+                runWhisper("base", tensor, setText);
             };
             source.connect(node);
-            //source.connect(whisperProcessor).connect(context.destination);
         });
     }
     //const [track] = stream.getAudioTracks();
@@ -72,6 +135,11 @@ async function convert() {
 
 function App() {
     const [count, setCount] = useState(0);
+    const [text, setText] = useState("");
+
+    const updateText = (text) => {
+        textRef.current = text;
+    };
 
     return (
         <div className="App">
@@ -88,11 +156,19 @@ function App() {
                 </a>
             </div>
             <h1>Vite + React</h1>
+            <textarea
+                readOnly
+                className="textarea"
+                rows="6"
+                cols="150"
+                onChange={(e) => setText(e.target.value)}
+                value={text}
+            />
             <div className="card">
                 <button
                     onClick={() => {
                         setCount((count) => count + 1);
-                        convert();
+                        convert(setText);
                         //source.start(0);
                     }}
                 >

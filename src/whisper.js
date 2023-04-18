@@ -721,7 +721,7 @@ function DecodingTask(model, options) {
                     this.tokenizer.no_speech() + 1
                 );
                 console.log("no speech", probs_at_sot, no_speech_probs);
-                if (no_speech_probs.data[0] > 0.1) {
+                if (no_speech_probs.data[0] > 0.3) {
                     no_speech = true;
                 }
             }
@@ -737,12 +737,13 @@ function DecodingTask(model, options) {
                 sum_logprobs
             );
             // if tokens have enough length and the last token is timestamp, force eot
+            console.log("force", tokens.size(), this.chunk_length)
             if (
                 no_speech ||
-                (tokens.size() >= 40 &&
+                (tokens.size() >= this.chunk_length * 4 &&
                     tokens.data[tokens.data.length - 1] >=
                         this.tokenizer.timestamp_begin()) ||
-                tokens.size() >= 60
+                tokens.size() >= this.chunk_length * 6
             ) {
                 //console.log("token complete");
                 // push eot to tokens
@@ -858,6 +859,7 @@ export function Whisper(
     debug = false
 ) {
     this.debug = debug;
+    this.running = false;
     this.encoderSession = fetch(encoderModelUrl)
         .then((response) => response.arrayBuffer())
         .then((buffer) =>
@@ -1174,12 +1176,15 @@ export function Whisper(
 
     // tensor: [n_samples]
     this.pad_or_trim = function (tensor, length) {
-        if (length == null) {
+        console.log("pad length", length);
+        if (length == null || length === undefined) {
             length = this.chunk_length * this.sample_rate;
         }
+        console.log("after pad length", length);
         if (tensor.size() > length) {
             tensor = tensor.slice(tensor.size() - length, tensor.size());
         }
+        console.log("after pad tensor", tensor);
         if (tensor.size() < length) {
             tensor = tensor.pad(length - tensor.shape[0]);
         }
