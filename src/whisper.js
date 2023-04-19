@@ -677,7 +677,7 @@ function DecodingTask(model, options) {
         return [languages, lang_probs];
     };
 
-    this._main_loop = async function (audio_features, tokens) {
+    this._main_loop = async function (audio_features, tokens, tokenCallback) {
         if (this.model.debug) {
             console.log("[DEBUG] Main decoding loop started.");
         }
@@ -736,14 +736,16 @@ function DecodingTask(model, options) {
                 logits,
                 sum_logprobs
             );
+            //console.log(JSON.stringify(tokens), tokenCallback);
+            tokenCallback(JSON.stringify(tokens));
             // if tokens have enough length and the last token is timestamp, force eot
-            console.log("force", tokens.size(), this.chunk_length)
+            //console.log("force", tokens.size(), this.chunk_length);
             if (
                 no_speech ||
-                (tokens.size() >= this.chunk_length * 4 &&
+                (tokens.size() >= this.model.chunk_length * 4 &&
                     tokens.data[tokens.data.length - 1] >=
                         this.tokenizer.timestamp_begin()) ||
-                tokens.size() >= this.chunk_length * 6
+                tokens.size() >= this.model.chunk_length * 6
             ) {
                 //console.log("token complete");
                 // push eot to tokens
@@ -765,7 +767,7 @@ function DecodingTask(model, options) {
         ];
     };
 
-    this.run = async function (mel) {
+    this.run = async function (mel, tokenCallback) {
         //this.decoder.reset();
         let n_audio = mel.shape[0];
         let audio_features = await this._get_audio_features(mel);
@@ -794,7 +796,8 @@ function DecodingTask(model, options) {
         let sum_logprobs, no_speech_probs;
         [tokens, sum_logprobs, no_speech_probs] = await this._main_loop(
             audio_features,
-            tokens
+            tokens,
+            tokenCallback
         );
         console.assert(
             (audio_features.shape[0] == no_speech_probs.shape[0]) == n_audio
@@ -1191,12 +1194,12 @@ export function Whisper(
         return tensor;
     };
 
-    this.decode = async function (mel, options) {
+    this.decode = async function (mel, options, tokenCallback = () => {}) {
         if (mel.shape.length == 2) {
             mel = mel.reshape([1, mel.shape[0], mel.shape[1]]);
         }
         let task = new DecodingTask(this, options);
-        let result = await task.run(mel);
+        let result = await task.run(mel, tokenCallback);
         return result[0];
     };
 }

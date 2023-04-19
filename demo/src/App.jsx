@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useEffect } from "react";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
@@ -77,7 +77,7 @@ async function getWhisper(model_type) {
     return whisper;
 }
 
-function runWhisper(
+async function runWhisper(
     model_type,
     tensor,
     textCallback,
@@ -85,9 +85,12 @@ function runWhisper(
 ) {
     getWhisper(model_type).then((whisper) => {
         let audio = whisper.pad_or_trim(tensor);
+        console.log("cb", tokenCallback);
         return whisper
             .preprocessor(audio)
-            .then((mel) => whisper.decode(mel, new DecodingOptions()))
+            .then((mel) =>
+                whisper.decode(mel, new DecodingOptions(), tokenCallback)
+            )
             .then((result) => {
                 console.log("result", result);
                 textCallback(result.text);
@@ -116,9 +119,11 @@ async function convert(setText) {
             node.port.onmessage = (e) => {
                 let buffer = new Float32Array(e.data);
                 let tensor = new Tensor([buffer.length], "float32", buffer);
-                runWhisper("small", tensor, setText);
-                tensor = new Tensor([buffer.length], "float32", buffer);
-                runWhisper("base", tensor, setText);
+                console.log("base start");
+                runWhisper("base", tensor, setText, setText);
+                console.log("base end");
+                //tensor = new Tensor([buffer.length], "float32", buffer);
+                //runWhisper("small", tensor, setText);
             };
             source.connect(node);
         });
@@ -136,10 +141,21 @@ async function convert(setText) {
 function App() {
     const [count, setCount] = useState(0);
     const [text, setText] = useState("");
+    let texts = [""];
 
     const updateText = (text) => {
-        textRef.current = text;
+        texts[0] = text;
+        //console.log("texts", texts[0]);
     };
+
+    //useEffect(() => {
+    //const interval = setInterval(() => {
+    ////texts[0] = texts[0] + "a";
+    //setText(texts[0]);
+    //console.log("texts", texts[0]);
+    //}, 100);
+    //return () => clearInterval(interval);
+    //}, []);
 
     return (
         <div className="App">
@@ -168,7 +184,7 @@ function App() {
                 <button
                     onClick={() => {
                         setCount((count) => count + 1);
-                        convert(setText);
+                        convert(updateText);
                         //source.start(0);
                     }}
                 >
