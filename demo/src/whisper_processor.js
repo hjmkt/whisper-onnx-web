@@ -24,7 +24,7 @@ class WhisperProcessor extends AudioWorkletProcessor {
                 this.buffer.slice(0, this.chunkLength * 16000)
             );
             this.buffer = this.buffer.slice(this.chunkLength * 8000);
-            this.first = false;
+            //this.first = false;
         }
         return true;
     }

@@ -17,125 +17,227 @@ import encoderSmallModelUrl from "@models/encoder_small_10s_int8.onnx.gz";
 import decoderBaseModelUrl from "@models/decoder_base_5s_int8.onnx.gz";
 import decoderSmallModelUrl0 from "@models/decoder_small_10s_int8.onnx.0.gz";
 import decoderSmallModelUrl1 from "@models/decoder_small_10s_int8.onnx.1.gz";
+import WhisperWorker from "./whisper_worker?worker";
 
-let whisper_pool = {
-    base: [
-        new Whisper(
-            "base",
-            preprocessorBaseModelUrl,
-            encoderBaseModelUrl,
-            [decoderBaseModelUrl],
-            positionalEmbeddingBaseUrl,
-            5,
-            true
-        ),
-        new Whisper(
-            "base",
-            preprocessorBaseModelUrl,
-            encoderBaseModelUrl,
-            [decoderBaseModelUrl],
-            positionalEmbeddingBaseUrl,
-            5,
-            true
-        ),
-    ],
-    small: [
-        new Whisper(
-            "small",
-            preprocessorSmallModelUrl,
-            encoderSmallModelUrl,
-            [decoderSmallModelUrl0, decoderSmallModelUrl1],
-            positionalEmbeddingSmallUrl,
-            10,
-            true
-        ),
-        new Whisper(
-            "small",
-            preprocessorSmallModelUrl,
-            encoderSmallModelUrl,
-            [decoderSmallModelUrl0, decoderSmallModelUrl1],
-            positionalEmbeddingSmallUrl,
-            10,
-            true
-        ),
-    ],
+let whisper_workers = {
+    base: {
+        0: { running: false, worker: new WhisperWorker() },
+        1: { running: false, worker: new WhisperWorker() },
+    },
+    small: {
+        0: { running: false, worker: new WhisperWorker() },
+        1: { running: false, worker: new WhisperWorker() },
+    },
 };
 
+let whisperInitialized = false;
+let lastBaseTexts = [];
+let lastSmallText = "";
+let tmpSmallText = "";
+let fixedText = "";
+let chunkIndex = 0;
+
+async function initWhisper(textCallback = () => {}) {
+    if (!whisperInitialized) {
+        Promise.all([
+            fetch(positionalEmbeddingBaseUrl).then((r) => r.arrayBuffer()),
+            fetch(preprocessorBaseModelUrl).then((r) => r.arrayBuffer()),
+            fetch(encoderBaseModelUrl).then((r) => r.arrayBuffer()),
+            fetch(decoderBaseModelUrl).then((r) => r.arrayBuffer()),
+        ]).then((values) => {
+            let [
+                positionalEmbeddingBase,
+                preprocessorBase,
+                encoderBase,
+                decoderBase,
+            ] = values;
+
+            console.log(
+                "init post",
+                positionalEmbeddingBase,
+                preprocessorBase,
+                encoderBase,
+                decoderBase
+            );
+            for (let i = 0; i < 2; i++) {
+                whisper_workers["base"][i].worker.postMessage({
+                    type: "init",
+                    modelType: "base",
+                    positionalEmbedding: positionalEmbeddingBase,
+                    preprocessorModel: preprocessorBase,
+                    encoderModel: encoderBase,
+                    decoderModel: decoderBase,
+                    chunkLength: 5,
+                    debug: false,
+                });
+            }
+        });
+        Promise.all([
+            fetch(positionalEmbeddingSmallUrl).then((r) => r.arrayBuffer()),
+            fetch(preprocessorSmallModelUrl).then((r) => r.arrayBuffer()),
+            fetch(encoderSmallModelUrl).then((r) => r.arrayBuffer()),
+            fetch(decoderSmallModelUrl0).then((r) => r.arrayBuffer()),
+            fetch(decoderSmallModelUrl1).then((r) => r.arrayBuffer()),
+        ]).then((values) => {
+            let [
+                positionalEmbeddingSmall,
+                preprocessorSmall,
+                encoderSmall,
+                decoderSmall0,
+                decoderSmall1,
+            ] = values;
+            let n_bytes = decoderSmall0.byteLength + decoderSmall1.byteLength;
+            let buffer = new ArrayBuffer(n_bytes);
+            buffer = new Uint8Array(buffer);
+            buffer.set(new Uint8Array(decoderSmall0), 0);
+            buffer.set(new Uint8Array(decoderSmall1), decoderSmall0.byteLength);
+            let decoderSmall = buffer.buffer;
+            for (let i = 0; i < 2; i++) {
+                whisper_workers["small"][i].worker.postMessage({
+                    type: "init",
+                    modelType: "small",
+                    positionalEmbedding: positionalEmbeddingSmall,
+                    preprocessorModel: preprocessorSmall,
+                    encoderModel: encoderSmall,
+                    decoderModel: decoderSmall,
+                    chunkLength: 10,
+                    debug: false,
+                });
+            }
+        });
+    }
+    for (let i = 0; i < 2; i++) {
+        whisper_workers["base"][i].worker.onmessage = (e) => {
+            console.log("base", e.data);
+            if (e.data.action == "result") {
+                lastBaseTexts.push(e.data.payload);
+                let headText = lastBaseTexts.slice(0, 2).join("");
+                let tailText = lastBaseTexts.slice(2).join("");
+                if (tmpSmallText.length >= headText.length) {
+                    headText = tmpSmallText;
+                } else {
+                    headText =
+                        tmpSmallText + headText.slice(tmpSmallText.length);
+                }
+                let text = fixedText + headText + tailText;
+                ((p) => textCallback(p))(text);
+                whisper_workers["base"][i].running = false;
+            } else {
+                let tmpTexts = [];
+                for (let i = 0; i < lastBaseTexts.length; i++) {
+                    tmpTexts.push(lastBaseTexts[i]);
+                }
+                tmpTexts.push(e.data.payload);
+                let headText = tmpTexts.slice(0, 2).join("");
+                let tailText = tmpTexts.slice(2).join("");
+                if (tmpSmallText.length >= headText.length) {
+                    headText = tmpSmallText;
+                } else {
+                    headText =
+                        tmpSmallText + headText.slice(tmpSmallText.length);
+                }
+                let text = fixedText + headText + tailText;
+                ((p) => textCallback(p))(text);
+                whisper_workers["base"][i].running = false;
+            }
+        };
+    }
+    for (let i = 0; i < 2; i++) {
+        whisper_workers["small"][i].worker.onmessage = (e) => {
+            console.log("small", e.data);
+            if (e.data.action == "result") {
+                if (lastBaseTexts.length >= 2) {
+                    lastBaseTexts = lastBaseTexts.slice(2);
+                }
+                lastSmallText = e.data.payload;
+                fixedText += lastSmallText;
+                tmpSmallText = "";
+                let text = fixedText + lastBaseTexts.join("");
+                ((p) => textCallback(p))(text);
+                whisper_workers["small"][i].running = false;
+            } else {
+                tmpSmallText = e.data.payload;
+                let headText = lastBaseTexts.slice(0, 2).join("");
+                let tailText = lastBaseTexts.slice(2).join("");
+                if (tmpSmallText.length >= headText.length) {
+                    headText = tmpSmallText;
+                } else {
+                    headText =
+                        tmpSmallText + headText.slice(tmpSmallText.length);
+                }
+                let text = fixedText + headText + tailText;
+                ((p) => textCallback(p))(text);
+            }
+        };
+    }
+    whisperInitialized = true;
+}
+
 async function getWhisper(model_type) {
-    let whisper = null;
-    while (whisper == null) {
-        for (let m of whisper_pool[model_type]) {
-            if (!m.running) {
-                whisper = m;
+    let workers = whisper_workers[model_type];
+    let worker = null;
+    while (worker == null) {
+        for (let i = 0; i < 2; i++) {
+            if (!workers[i].running) {
+                worker = workers[i];
                 break;
             }
         }
-        if (whisper == null) {
+        if (worker == null) {
             await new Promise((resolve) => setTimeout(resolve, 100));
         }
     }
-    return whisper;
+    worker.running = true;
+    return worker;
 }
 
-async function runWhisper(
+function runWhisper(
     model_type,
     tensor,
     textCallback,
     tokenCallback = () => {}
 ) {
-    getWhisper(model_type).then((whisper) => {
-        let audio = whisper.pad_or_trim(tensor);
-        console.log("cb", tokenCallback);
-        return whisper
-            .preprocessor(audio)
-            .then((mel) =>
-                whisper.decode(mel, new DecodingOptions(), tokenCallback)
-            )
-            .then((result) => {
-                console.log("result", result);
-                textCallback(result.text);
-            });
+    console.log("runWhisper");
+    getWhisper(model_type).then((worker) => {
+        worker.worker.postMessage({
+            type: "run",
+            tensor: {
+                shape: tensor.shape,
+                data: tensor.data,
+                dtype: tensor.dtype,
+            },
+        });
     });
 }
 
-async function convert(setText) {
-    if (true) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: true,
+async function convert() {
+    const stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: true,
+    });
+    const tmpCtx = new AudioContext({ sampleRate: 16000 });
+    const source = tmpCtx.createMediaStreamSource(stream);
+    const processorBlob = new Blob([processorCode], {
+        type: "text/javascript",
+    });
+    const processorUrl = URL.createObjectURL(processorBlob);
+    await tmpCtx.audioWorklet.addModule(processorUrl).then(() => {
+        const node = new AudioWorkletNode(tmpCtx, "whisper-processor", {
+            processorOptions: {
+                chunkLength: CHUNK_LENGTH,
+            },
         });
-        const tmpCtx = new AudioContext({ sampleRate: 16000 });
-        const source = tmpCtx.createMediaStreamSource(stream);
-        const processorBlob = new Blob([processorCode], {
-            type: "text/javascript",
-        });
-        const processorUrl = URL.createObjectURL(processorBlob);
-        await tmpCtx.audioWorklet.addModule(processorUrl).then(() => {
-            const node = new AudioWorkletNode(tmpCtx, "whisper-processor", {
-                processorOptions: {
-                    chunkLength: CHUNK_LENGTH,
-                },
-            });
-            node.port.onmessage = (e) => {
-                let buffer = new Float32Array(e.data);
-                let tensor = new Tensor([buffer.length], "float32", buffer);
-                console.log("base start");
-                runWhisper("base", tensor, setText, setText);
-                console.log("base end");
-                //tensor = new Tensor([buffer.length], "float32", buffer);
-                //runWhisper("small", tensor, setText);
-            };
-            source.connect(node);
-        });
-    }
-    //const [track] = stream.getAudioTracks();
-    return;
-    let audio = await whisper.load_audio(audioUrl);
-    audio = whisper.pad_or_trim(audio);
-    let mel = await whisper.preprocessor(audio);
-    let options = new DecodingOptions();
-    let result = await whisper.decode(mel, options);
-    return result;
+        node.port.onmessage = (e) => {
+            let buffer = new Float32Array(e.data);
+            let tensor = new Tensor([buffer.length], "float32", buffer);
+            runWhisper("base", tensor);
+            if (chunkIndex % 2 == 1) {
+                runWhisper("small", tensor);
+            }
+            chunkIndex++;
+        };
+        source.connect(node);
+    });
 }
 
 function App() {
@@ -147,6 +249,9 @@ function App() {
         texts[0] = text;
         //console.log("texts", texts[0]);
     };
+    useEffect(() => {
+        initWhisper(setText);
+    });
 
     //useEffect(() => {
     //const interval = setInterval(() => {
@@ -184,7 +289,7 @@ function App() {
                 <button
                     onClick={() => {
                         setCount((count) => count + 1);
-                        convert(updateText);
+                        convert();
                         //source.start(0);
                     }}
                 >
