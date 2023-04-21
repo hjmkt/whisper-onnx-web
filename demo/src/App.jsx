@@ -37,7 +37,11 @@ let tmpSmallText = "";
 let fixedText = "";
 let chunkIndex = 0;
 
-async function initWhisper(progressCallback, textCallback = () => {}) {
+async function initWhisper(
+    progressCallback,
+    textCallback = () => {},
+    isProduction
+) {
     if (!whisperInitialized) {
         Promise.all([
             fetch(positionalEmbeddingBaseUrl),
@@ -84,6 +88,7 @@ async function initWhisper(progressCallback, textCallback = () => {}) {
                                 decoderModel: v[3],
                                 chunkLength: 5,
                                 debug: false,
+                                isProduction: isProduction,
                             });
                         }
                         let n_bytes = v[7].byteLength + v[8].byteLength;
@@ -102,6 +107,7 @@ async function initWhisper(progressCallback, textCallback = () => {}) {
                                 decoderModel: decoderSmall,
                                 chunkLength: 10,
                                 debug: false,
+                                isProduction: isProduction,
                             });
                         }
                         progressCallback(100);
@@ -264,7 +270,7 @@ async function convert() {
     });
 }
 
-function App() {
+const App = ({ isProduction }) => {
     const [count, setCount] = useState(0);
     const [progress, setProgress] = useState(0);
     const [text, setText] = useState("");
@@ -275,17 +281,8 @@ function App() {
         //console.log("texts", texts[0]);
     };
     useEffect(() => {
-        initWhisper(setProgress, setText);
+        initWhisper(setProgress, setText, isProduction);
     });
-
-    //useEffect(() => {
-    //const interval = setInterval(() => {
-    ////texts[0] = texts[0] + "a";
-    //setText(texts[0]);
-    //console.log("texts", texts[0]);
-    //}, 100);
-    //return () => clearInterval(interval);
-    //}, []);
 
     return (
         <div className="App">
@@ -303,7 +300,7 @@ function App() {
             </div>
             <h1>Vite + React</h1>
             <div>
-            <Circle progress={progress} />
+                <Circle progress={progress} />
             </div>
             <textarea
                 readOnly
@@ -332,6 +329,6 @@ function App() {
             </p>
         </div>
     );
-}
+};
 
 export default App;
