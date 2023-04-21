@@ -4,22 +4,21 @@ const whisperWorker = {
     whisper: null,
 };
 
+const originalFetch = self.fetch;
+const basePath = import.meta.env.BASE_URL;
+self.fetch = function (input, init) {
+    console.log("start", input, basePath);
+    if (typeof input === "string" && input.match(/ort.*.wasm/g)) {
+        input = `${basePath}${input}`.replace(/\/\//g, "/");
+        console.log("fetch", input);
+    }
+
+    return originalFetch(input, init);
+};
+
 self.onmessage = function (e) {
     console.log("worker received message", e);
     if (e.data.type === "init") {
-        if (e.data.isProduction || true) {
-            const originalFetch = self.fetch;
-            const basePath = import.meta.env.BASE_URL;
-            self.fetch = function (input, init) {
-                console.log("start", input);
-                if (typeof input === "string" && input.match(/ort.*.wasm/g)) {
-                    input = `${basePath}${input}`.replace(/\/\//g, "/");
-                    console.log("fetch", input);
-                }
-
-                return originalFetch(input, init);
-            };
-        }
         whisperWorker.whisper = new Whisper(
             e.data.modelType,
             e.data.preprocessorModel,
