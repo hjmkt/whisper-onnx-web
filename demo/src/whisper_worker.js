@@ -1,4 +1,3 @@
-import { Whisper, DecodingOptions, Tensor } from "@core/whisper";
 
 const whisperWorker = {
     whisper: null,
@@ -15,6 +14,7 @@ self.fetch = function (input, init) {
 
     return originalFetch(input, init);
 };
+import { Whisper, DecodingOptions, Tensor } from "@core/whisper";
 
 self.onmessage = function (e) {
     console.log("worker received message", e);
