@@ -264,6 +264,7 @@ function GreedyDecoder(temperature, eot) {
     this.update = function (tokens, logits, sum_logprobs) {
         let next_tokens = null;
         next_tokens = [logits.data.indexOf(max(logits.data))];
+        //console.log("next_tokens", next_tokens, max(logits.data));
 
         //console.log("update logits", logits);
         let logprobs = logits.log_softmax2d();
@@ -725,7 +726,7 @@ function DecodingTask(model, options) {
                     this.tokenizer.no_speech(),
                     this.tokenizer.no_speech() + 1
                 );
-                console.log("no speech", probs_at_sot, no_speech_probs);
+                //console.log("no speech", probs_at_sot, no_speech_probs);
                 if (no_speech_probs.data[0] > 0.3) {
                     no_speech = true;
                 }
@@ -851,7 +852,7 @@ function DecodingTask(model, options) {
             tokens,
             sum_logprobs
         );
-        console.log("_tokens", _tokens);
+        //console.log("_tokens", _tokens);
         tokens = [];
         for (let i = 0; i < _tokens.shape[0]; i++) {
             let s = _tokens.data;
@@ -1213,13 +1214,14 @@ export function Whisper(
         }
         //console.log("after pad length", length);
         if (tensor.size() > length) {
-            //tensor = tensor.slice(tensor.size() - length, tensor.size());
-            tensor = tensor.slice(0, length);
+            tensor = tensor.slice(tensor.size() - length, tensor.size());
+            //tensor = tensor.slice(0, length);
         }
         //console.log("after pad tensor", tensor);
         if (tensor.size() < length) {
             tensor = tensor.pad(length - tensor.shape[0]);
         }
+        tensor = tensor.pad(8000).slice(8000);
         return tensor;
     };
 

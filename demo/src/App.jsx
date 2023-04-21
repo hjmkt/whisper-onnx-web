@@ -4,19 +4,18 @@ import viteLogo from "/vite.svg";
 import "./App.css";
 import audioUrl from "./assets/en.mp3";
 import { Whisper, DecodingOptions, Tensor } from "@core/whisper";
-import positionalEmbeddingBaseUrl from "@models/positional_embedding_base.bin.gz";
-import positionalEmbeddingSmallUrl from "@models/positional_embedding_small.bin.gz";
+import positionalEmbeddingBaseUrl from "@models/positional_embedding_base.bin.compressed";
+import positionalEmbeddingSmallUrl from "@models/positional_embedding_small.bin.compressed";
 import processorCode from "./whisper_processor.js?raw";
 
 const CHUNK_LENGTH = 10;
-let model_type = "small";
-import preprocessorBaseModelUrl from "@models/preprocessor_base_5s_int8.onnx.gz";
-import preprocessorSmallModelUrl from "@models/preprocessor_small_10s_int8.onnx.gz";
-import encoderBaseModelUrl from "@models/encoder_base_5s_int8.onnx.gz";
-import encoderSmallModelUrl from "@models/encoder_small_10s_int8.onnx.gz";
-import decoderBaseModelUrl from "@models/decoder_base_5s_int8.onnx.gz";
-import decoderSmallModelUrl0 from "@models/decoder_small_10s_int8.onnx.0.gz";
-import decoderSmallModelUrl1 from "@models/decoder_small_10s_int8.onnx.1.gz";
+import preprocessorBaseModelUrl from "@models/preprocessor_base_5s_int8.onnx.compressed";
+import preprocessorSmallModelUrl from "@models/preprocessor_small_10s_int8.onnx.compressed";
+import encoderBaseModelUrl from "@models/encoder_base_5s_int8.onnx.compressed";
+import encoderSmallModelUrl from "@models/encoder_small_10s_int8.onnx.compressed";
+import decoderBaseModelUrl from "@models/decoder_base_5s_int8.onnx.compressed";
+import decoderSmallModelUrl0 from "@models/decoder_small_10s_int8.onnx.0.compressed";
+import decoderSmallModelUrl1 from "@models/decoder_small_10s_int8.onnx.1.compressed";
 import WhisperWorker from "./whisper_worker?worker";
 
 let whisper_workers = {
@@ -37,78 +36,104 @@ let tmpSmallText = "";
 let fixedText = "";
 let chunkIndex = 0;
 
-async function initWhisper(textCallback = () => {}) {
+async function initWhisper(progressCallback, textCallback = () => {}) {
     if (!whisperInitialized) {
         Promise.all([
-            fetch(positionalEmbeddingBaseUrl).then((r) => r.arrayBuffer()),
-            fetch(preprocessorBaseModelUrl).then((r) => r.arrayBuffer()),
-            fetch(encoderBaseModelUrl).then((r) => r.arrayBuffer()),
-            fetch(decoderBaseModelUrl).then((r) => r.arrayBuffer()),
-        ]).then((values) => {
-            let [
-                positionalEmbeddingBase,
-                preprocessorBase,
-                encoderBase,
-                decoderBase,
-            ] = values;
-
-            console.log(
-                "init post",
-                positionalEmbeddingBase,
-                preprocessorBase,
-                encoderBase,
-                decoderBase
+            fetch(positionalEmbeddingBaseUrl),
+            fetch(preprocessorBaseModelUrl),
+            fetch(encoderBaseModelUrl),
+            fetch(decoderBaseModelUrl),
+            fetch(positionalEmbeddingSmallUrl),
+            fetch(preprocessorSmallModelUrl),
+            fetch(encoderSmallModelUrl),
+            fetch(decoderSmallModelUrl0),
+            fetch(decoderSmallModelUrl1),
+        ]).then((fetchRes) => {
+            const lengths = fetchRes.map((v) =>
+                Number(v.headers.get("content-length"))
             );
-            for (let i = 0; i < 2; i++) {
-                whisper_workers["base"][i].worker.postMessage({
-                    type: "init",
-                    modelType: "base",
-                    positionalEmbedding: positionalEmbeddingBase,
-                    preprocessorModel: preprocessorBase,
-                    encoderModel: encoderBase,
-                    decoderModel: decoderBase,
-                    chunkLength: 5,
-                    debug: false,
-                });
-            }
-        });
-        Promise.all([
-            fetch(positionalEmbeddingSmallUrl).then((r) => r.arrayBuffer()),
-            fetch(preprocessorSmallModelUrl).then((r) => r.arrayBuffer()),
-            fetch(encoderSmallModelUrl).then((r) => r.arrayBuffer()),
-            fetch(decoderSmallModelUrl0).then((r) => r.arrayBuffer()),
-            fetch(decoderSmallModelUrl1).then((r) => r.arrayBuffer()),
-        ]).then((values) => {
-            let [
-                positionalEmbeddingSmall,
-                preprocessorSmall,
-                encoderSmall,
-                decoderSmall0,
-                decoderSmall1,
-            ] = values;
-            let n_bytes = decoderSmall0.byteLength + decoderSmall1.byteLength;
-            let buffer = new ArrayBuffer(n_bytes);
-            buffer = new Uint8Array(buffer);
-            buffer.set(new Uint8Array(decoderSmall0), 0);
-            buffer.set(new Uint8Array(decoderSmall1), decoderSmall0.byteLength);
-            let decoderSmall = buffer.buffer;
-            for (let i = 0; i < 2; i++) {
-                whisper_workers["small"][i].worker.postMessage({
-                    type: "init",
-                    modelType: "small",
-                    positionalEmbedding: positionalEmbeddingSmall,
-                    preprocessorModel: preprocessorSmall,
-                    encoderModel: encoderSmall,
-                    decoderModel: decoderSmall,
-                    chunkLength: 10,
-                    debug: false,
-                });
-            }
+            const total = lengths.reduce((a, b) => a + b, 0);
+            let buffers = lengths.map((v) => new Uint8Array(v));
+            let readers = fetchRes.map((v) => v.body.getReader());
+            let chunks = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let chunk = 0;
+            Promise.all(readers.map((v) => v.read())).then(function process(
+                res
+            ) {
+                if (
+                    res.every((v) => v.done)
+                ) {
+                    Promise.all(
+                        buffers.map((v) =>
+                            new Response(
+                                new Blob([v])
+                                    .stream()
+                                    .pipeThrough(
+                                        new DecompressionStream("gzip")
+                                    )
+                            ).arrayBuffer()
+                        )
+                    ).then((v) => {
+                        console.log(v);
+                        for (let i = 0; i < 2; i++) {
+                            whisper_workers["base"][i].worker.postMessage({
+                                type: "init",
+                                modelType: "base",
+                                positionalEmbedding: v[0],
+                                preprocessorModel: v[1],
+                                encoderModel: v[2],
+                                decoderModel: v[3],
+                                chunkLength: 5,
+                                debug: false,
+                            });
+                        }
+                        let n_bytes = v[7].byteLength + v[8].byteLength;
+                        let buffer = new ArrayBuffer(n_bytes);
+                        buffer = new Uint8Array(buffer);
+                        buffer.set(new Uint8Array(v[7]), 0);
+                        buffer.set(new Uint8Array(v[8]), v[7].byteLength);
+                        let decoderSmall = buffer.buffer;
+                        for (let i = 0; i < 2; i++) {
+                            whisper_workers["small"][i].worker.postMessage({
+                                type: "init",
+                                modelType: "small",
+                                positionalEmbedding: v[4],
+                                preprocessorModel: v[5],
+                                encoderModel: v[6],
+                                decoderModel: decoderSmall,
+                                chunkLength: 10,
+                                debug: false,
+                            });
+                        }
+                        progressCallback(100);
+                    });
+                    return;
+                }
+                for (let i = 0; i < res.length; i++) {
+                    if (!res[i].done) {
+                        if (
+                            buffers[i].byteLength <
+                            chunks[i] + res[i].value.byteLength
+                        ) {
+                            let newBuffer = new Uint8Array(
+                                chunks[i] + res[i].value.byteLength
+                            );
+                            newBuffer.set(buffers[i], 0);
+                            buffers[i] = newBuffer;
+                        }
+                        buffers[i].set(res[i].value, chunks[i]);
+                        chunks[i] += res[i].value.byteLength;
+                        chunk += res[i].value.byteLength;
+                    }
+                }
+                progressCallback((chunk / total) * 99);
+                Promise.all(readers.map((v) => v.read())).then(process);
+            });
         });
     }
     for (let i = 0; i < 2; i++) {
         whisper_workers["base"][i].worker.onmessage = (e) => {
-            console.log("base", e.data);
+            //console.log("base", e.data);
             if (e.data.action == "result") {
                 lastBaseTexts.push(e.data.payload);
                 let headText = lastBaseTexts.slice(0, 2).join("");
@@ -144,7 +169,7 @@ async function initWhisper(textCallback = () => {}) {
     }
     for (let i = 0; i < 2; i++) {
         whisper_workers["small"][i].worker.onmessage = (e) => {
-            console.log("small", e.data);
+            //console.log("small", e.data);
             if (e.data.action == "result") {
                 if (lastBaseTexts.length >= 2) {
                     lastBaseTexts = lastBaseTexts.slice(2);
@@ -197,7 +222,7 @@ function runWhisper(
     textCallback,
     tokenCallback = () => {}
 ) {
-    console.log("runWhisper");
+    //console.log("runWhisper");
     getWhisper(model_type).then((worker) => {
         worker.worker.postMessage({
             type: "run",
@@ -250,7 +275,7 @@ function App() {
         //console.log("texts", texts[0]);
     };
     useEffect(() => {
-        initWhisper(setText);
+        initWhisper(setText, setText);
     });
 
     //useEffect(() => {

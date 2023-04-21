@@ -10,6 +10,7 @@ export default defineConfig({
         "**/vocab.json",
         "**/*.wasm",
         "**/*.gz",
+        "**/*.compressed",
     ],
     resolve: {
         alias: {
