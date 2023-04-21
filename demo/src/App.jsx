@@ -17,6 +17,7 @@ import decoderBaseModelUrl from "@models/decoder_base_5s_int8.onnx.compressed";
 import decoderSmallModelUrl0 from "@models/decoder_small_10s_int8.onnx.0.compressed";
 import decoderSmallModelUrl1 from "@models/decoder_small_10s_int8.onnx.1.compressed";
 import WhisperWorker from "./whisper_worker?worker";
+import Circle from "react-circle";
 
 let whisper_workers = {
     base: {
@@ -60,9 +61,7 @@ async function initWhisper(progressCallback, textCallback = () => {}) {
             Promise.all(readers.map((v) => v.read())).then(function process(
                 res
             ) {
-                if (
-                    res.every((v) => v.done)
-                ) {
+                if (res.every((v) => v.done)) {
                     Promise.all(
                         buffers.map((v) =>
                             new Response(
@@ -126,7 +125,7 @@ async function initWhisper(progressCallback, textCallback = () => {}) {
                         chunk += res[i].value.byteLength;
                     }
                 }
-                progressCallback((chunk / total) * 99);
+                progressCallback(Math.floor((chunk / total) * 99));
                 Promise.all(readers.map((v) => v.read())).then(process);
             });
         });
@@ -267,6 +266,7 @@ async function convert() {
 
 function App() {
     const [count, setCount] = useState(0);
+    const [progress, setProgress] = useState(0);
     const [text, setText] = useState("");
     let texts = [""];
 
@@ -275,7 +275,7 @@ function App() {
         //console.log("texts", texts[0]);
     };
     useEffect(() => {
-        initWhisper(setText, setText);
+        initWhisper(setProgress, setText);
     });
 
     //useEffect(() => {
@@ -302,6 +302,9 @@ function App() {
                 </a>
             </div>
             <h1>Vite + React</h1>
+            <div>
+            <Circle progress={progress} />
+            </div>
             <textarea
                 readOnly
                 className="textarea"
