@@ -17,7 +17,8 @@
     "react-circle": "^1.1.1",
     "react-dom": "^18.2.0",
     "tiktoken-node": "^0.0.5",
-    "typescript": "^5.0.2"
+    "typescript": "^5.0.2",
+    "vite": "^4.3.1"
   },
   "devDependencies": {
     "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
@@ -29,7 +30,6 @@
     "eslint": "^8.36.0",
     "eslint-config-prettier": "^8.8.0",
     "eslint-plugin-react": "^7.32.2",
-    "prettier": "^2.8.7",
-    "vite": "^4.2.0"
+    "prettier": "^2.8.7"
   }
 }

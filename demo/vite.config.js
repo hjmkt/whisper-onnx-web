@@ -15,11 +15,7 @@ export default defineConfig(({ command, mode }) => {
             },
             base: "/whisper-onnx-web",
             plugins: [react()],
-            assetsInclude: [
-                "**/*.onnx",
-                "**/*.gz",
-                "**/*.compressed",
-            ],
+            assetsInclude: ["**/*.onnx", "**/*.gz", "**/*.compressed"],
             resolve: {
                 alias: {
                     "@core": path.resolve(__dirname, "../src"),
@@ -30,7 +26,7 @@ export default defineConfig(({ command, mode }) => {
                     "node_nodules",
                 ],
             },
-            build: { sourcemap: true },
+            build: { sourcemap: true, minify: false },
         };
     } else {
         return {
