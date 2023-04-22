@@ -36,6 +36,54 @@ let tmpSmallText = "";
 let fixedText = "";
 let chunkIndex = 0;
 
+function openDatabase() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open("CacheDB", 1);
+
+        request.onerror = (event) => {
+            console.error("Error opening database:", event.target.errorCode);
+            reject(event.target.errorCode);
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            db.createObjectStore("files", { keyPath: "name" });
+        };
+    });
+}
+
+async function cache(name, buffer) {
+    const db = await openDatabase();
+    const transaction = db.transaction("files", "readwrite");
+    const store = transaction.objectStore("files");
+    store.put({ name, buffer });
+}
+
+async function getCachedData(name) {
+    const db = await openDatabase();
+    const transaction = db.transaction("files", "readonly");
+    const store = transaction.objectStore("files");
+    const request = store.get(name);
+
+    return new Promise((resolve, reject) => {
+        request.onerror = (event) => {
+            console.error(
+                "Error fetching file from IndexedDB:",
+                event.target.errorCode
+            );
+            reject(event.target.errorCode);
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result ? event.target.result.buffer : null);
+        };
+    });
+}
+
 async function initWhisper(
     progressCallback,
     textCallback = () => {},
@@ -43,96 +91,164 @@ async function initWhisper(
 ) {
     if (!whisperInitialized) {
         Promise.all([
-            fetch(positionalEmbeddingBaseUrl),
-            fetch(preprocessorBaseModelUrl),
-            fetch(encoderBaseModelUrl),
-            fetch(decoderBaseModelUrl),
-            fetch(positionalEmbeddingSmallUrl),
-            fetch(preprocessorSmallModelUrl),
-            fetch(encoderSmallModelUrl),
-            fetch(decoderSmallModelUrl0),
-            fetch(decoderSmallModelUrl1),
-        ]).then((fetchRes) => {
-            const lengths = fetchRes.map((v) =>
-                Number(v.headers.get("content-length"))
-            );
-            const total = lengths.reduce((a, b) => a + b, 0);
-            let buffers = lengths.map((v) => new Uint8Array(v));
-            let readers = fetchRes.map((v) => v.body.getReader());
-            let chunks = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-            let chunk = 0;
-            Promise.all(readers.map((v) => v.read())).then(function process(
-                res
-            ) {
-                if (res.every((v) => v.done)) {
-                    Promise.all(
-                        buffers.map((v) =>
-                            new Response(
-                                new Blob([v])
-                                    .stream()
-                                    .pipeThrough(
-                                        new DecompressionStream("gzip")
-                                    )
-                            ).arrayBuffer()
-                        )
-                    ).then((v) => {
-                        for (let i = 0; i < 2; i++) {
-                            whisper_workers["base"][i].worker.postMessage({
-                                type: "init",
-                                modelType: "base",
-                                positionalEmbedding: v[0],
-                                preprocessorModel: v[1],
-                                encoderModel: v[2],
-                                decoderModel: v[3],
-                                chunkLength: 5,
-                                debug: false,
-                                isProduction: isProduction,
-                            });
-                        }
-                        let n_bytes = v[7].byteLength + v[8].byteLength;
-                        let buffer = new ArrayBuffer(n_bytes);
-                        buffer = new Uint8Array(buffer);
-                        buffer.set(new Uint8Array(v[7]), 0);
-                        buffer.set(new Uint8Array(v[8]), v[7].byteLength);
-                        let decoderSmall = buffer.buffer;
-                        for (let i = 0; i < 2; i++) {
-                            whisper_workers["small"][i].worker.postMessage({
-                                type: "init",
-                                modelType: "small",
-                                positionalEmbedding: v[4],
-                                preprocessorModel: v[5],
-                                encoderModel: v[6],
-                                decoderModel: decoderSmall,
-                                chunkLength: 10,
-                                debug: false,
-                                isProduction: isProduction,
-                            });
-                        }
-                        progressCallback(100);
-                    });
-                    return;
-                }
-                for (let i = 0; i < res.length; i++) {
-                    if (!res[i].done) {
-                        if (
-                            buffers[i].byteLength <
-                            chunks[i] + res[i].value.byteLength
-                        ) {
-                            let newBuffer = new Uint8Array(
-                                chunks[i] + res[i].value.byteLength
-                            );
-                            newBuffer.set(buffers[i], 0);
-                            buffers[i] = newBuffer;
-                        }
-                        buffers[i].set(res[i].value, chunks[i]);
-                        chunks[i] += res[i].value.byteLength;
-                        chunk += res[i].value.byteLength;
+            getCachedData("embedding-base"),
+            getCachedData("preproc-base-5s"),
+            getCachedData("encoder-base-5s"),
+            getCachedData("decoder-base-5s"),
+            getCachedData("embedding-small"),
+            getCachedData("preproc-small-10s"),
+            getCachedData("encoder-small-10s"),
+            getCachedData("decoder-small-10s"),
+        ])
+            .then((cachedData) => {
+                if (cachedData.every((v) => v !== null)) {
+                    console.log("Using cached data", cachedData);
+                    let v = cachedData;
+                    for (let i = 0; i < 2; i++) {
+                        whisper_workers["base"][i].worker.postMessage({
+                            type: "init",
+                            modelType: "base",
+                            positionalEmbedding: v[0],
+                            preprocessorModel: v[1],
+                            encoderModel: v[2],
+                            decoderModel: v[3],
+                            chunkLength: 5,
+                            debug: false,
+                            isProduction: isProduction,
+                        });
                     }
+                    for (let i = 0; i < 2; i++) {
+                        whisper_workers["small"][i].worker.postMessage({
+                            type: "init",
+                            modelType: "small",
+                            positionalEmbedding: v[4],
+                            preprocessorModel: v[5],
+                            encoderModel: v[6],
+                            decoderModel: v[7],
+                            chunkLength: 10,
+                            debug: false,
+                            isProduction: isProduction,
+                        });
+                    }
+                    progressCallback(100);
+                } else {
+                    throw new Error("No cached data");
                 }
-                progressCallback(Math.floor((chunk / total) * 99));
-                Promise.all(readers.map((v) => v.read())).then(process);
+            })
+            .catch((e) => {
+                console.log("cache error", e);
+                Promise.all([
+                    fetch(positionalEmbeddingBaseUrl),
+                    fetch(preprocessorBaseModelUrl),
+                    fetch(encoderBaseModelUrl),
+                    fetch(decoderBaseModelUrl),
+                    fetch(positionalEmbeddingSmallUrl),
+                    fetch(preprocessorSmallModelUrl),
+                    fetch(encoderSmallModelUrl),
+                    fetch(decoderSmallModelUrl0),
+                    fetch(decoderSmallModelUrl1),
+                ]).then((fetchRes) => {
+                    const lengths = fetchRes.map((v) =>
+                        Number(v.headers.get("content-length"))
+                    );
+                    const total = lengths.reduce((a, b) => a + b, 0);
+                    let buffers = lengths.map((v) => new Uint8Array(v));
+                    let readers = fetchRes.map((v) => v.body.getReader());
+                    let chunks = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+                    let chunk = 0;
+                    Promise.all(readers.map((v) => v.read())).then(
+                        function process(res) {
+                            if (res.every((v) => v.done)) {
+                                Promise.all(
+                                    buffers.map((v) =>
+                                        new Response(
+                                            new Blob([v])
+                                                .stream()
+                                                .pipeThrough(
+                                                    new DecompressionStream(
+                                                        "gzip"
+                                                    )
+                                                )
+                                        ).arrayBuffer()
+                                    )
+                                ).then((v) => {
+                                    for (let i = 0; i < 2; i++) {
+                                        whisper_workers["base"][
+                                            i
+                                        ].worker.postMessage({
+                                            type: "init",
+                                            modelType: "base",
+                                            positionalEmbedding: v[0],
+                                            preprocessorModel: v[1],
+                                            encoderModel: v[2],
+                                            decoderModel: v[3],
+                                            chunkLength: 5,
+                                            debug: false,
+                                            isProduction: isProduction,
+                                        });
+                                    }
+                                    let n_bytes =
+                                        v[7].byteLength + v[8].byteLength;
+                                    let buffer = new ArrayBuffer(n_bytes);
+                                    buffer = new Uint8Array(buffer);
+                                    buffer.set(new Uint8Array(v[7]), 0);
+                                    buffer.set(
+                                        new Uint8Array(v[8]),
+                                        v[7].byteLength
+                                    );
+                                    let decoderSmall = buffer.buffer;
+                                    for (let i = 0; i < 2; i++) {
+                                        whisper_workers["small"][
+                                            i
+                                        ].worker.postMessage({
+                                            type: "init",
+                                            modelType: "small",
+                                            positionalEmbedding: v[4],
+                                            preprocessorModel: v[5],
+                                            encoderModel: v[6],
+                                            decoderModel: decoderSmall,
+                                            chunkLength: 10,
+                                            debug: false,
+                                            isProduction: isProduction,
+                                        });
+                                    }
+                                    cache("embedding-base", v[0]);
+                                    cache("preproc-base-5s", v[1]);
+                                    cache("encoder-base-5s", v[2]);
+                                    cache("decoder-base-5s", v[3]);
+                                    cache("embedding-small", v[4]);
+                                    cache("preproc-small-10s", v[5]);
+                                    cache("encoder-small-10s", v[6]);
+                                    cache("decoder-small-10s", decoderSmall);
+                                    progressCallback(100);
+                                });
+                                return;
+                            }
+                            for (let i = 0; i < res.length; i++) {
+                                if (!res[i].done) {
+                                    if (
+                                        buffers[i].byteLength <
+                                        chunks[i] + res[i].value.byteLength
+                                    ) {
+                                        let newBuffer = new Uint8Array(
+                                            chunks[i] + res[i].value.byteLength
+                                        );
+                                        newBuffer.set(buffers[i], 0);
+                                        buffers[i] = newBuffer;
+                                    }
+                                    buffers[i].set(res[i].value, chunks[i]);
+                                    chunks[i] += res[i].value.byteLength;
+                                    chunk += res[i].value.byteLength;
+                                }
+                            }
+                            progressCallback(Math.floor((chunk / total) * 99));
+                            Promise.all(readers.map((v) => v.read())).then(
+                                process
+                            );
+                        }
+                    );
+                });
             });
-        });
     }
     for (let i = 0; i < 2; i++) {
         whisper_workers["base"][i].worker.onmessage = (e) => {
