@@ -32,7 +32,6 @@ let whisper_workers = {
 
 let whisperInitialized = false;
 let lastBaseTexts = [];
-let lastSmallText = "";
 let tmpSmallText = "";
 let fixedText = "";
 let chunkIndex = 0;
@@ -77,7 +76,6 @@ async function initWhisper(
                             ).arrayBuffer()
                         )
                     ).then((v) => {
-                        console.log(v);
                         for (let i = 0; i < 2; i++) {
                             whisper_workers["base"][i].worker.postMessage({
                                 type: "init",
@@ -138,7 +136,6 @@ async function initWhisper(
     }
     for (let i = 0; i < 2; i++) {
         whisper_workers["base"][i].worker.onmessage = (e) => {
-            //console.log("base", e.data);
             if (e.data.action == "result") {
                 lastBaseTexts.push(e.data.payload);
                 let headText = lastBaseTexts.slice(0, 2).join("");
@@ -174,13 +171,11 @@ async function initWhisper(
     }
     for (let i = 0; i < 2; i++) {
         whisper_workers["small"][i].worker.onmessage = (e) => {
-            //console.log("small", e.data);
             if (e.data.action == "result") {
                 if (lastBaseTexts.length >= 2) {
                     lastBaseTexts = lastBaseTexts.slice(2);
                 }
-                lastSmallText = e.data.payload;
-                fixedText += lastSmallText;
+                fixedText += e.data.payload;
                 tmpSmallText = "";
                 let text = fixedText + lastBaseTexts.join("");
                 ((p) => textCallback(p))(text);
@@ -227,7 +222,6 @@ function runWhisper(
     textCallback,
     tokenCallback = () => {}
 ) {
-    //console.log("runWhisper");
     getWhisper(model_type).then((worker) => {
         worker.worker.postMessage({
             type: "run",
@@ -240,7 +234,7 @@ function runWhisper(
     });
 }
 
-async function convert() {
+async function transcribe() {
     const stream = await navigator.mediaDevices.getUserMedia({
         video: false,
         audio: true,
@@ -274,12 +268,7 @@ const App = ({ isProduction }) => {
     const [count, setCount] = useState(0);
     const [progress, setProgress] = useState(0);
     const [text, setText] = useState("");
-    let texts = [""];
 
-    const updateText = (text) => {
-        texts[0] = text;
-        //console.log("texts", texts[0]);
-    };
     useEffect(() => {
         initWhisper(setProgress, setText, isProduction);
     });
@@ -314,8 +303,7 @@ const App = ({ isProduction }) => {
                 <button
                     onClick={() => {
                         setCount((count) => count + 1);
-                        convert();
-                        //source.start(0);
+                        transcribe();
                     }}
                 >
                     count is {count}

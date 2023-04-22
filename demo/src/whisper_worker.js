@@ -1,15 +1,13 @@
-
 const whisperWorker = {
     whisper: null,
 };
 
+// override fetch to load .wasm files from base path
 const originalFetch = self.fetch;
 const basePath = import.meta.env.BASE_URL;
 self.fetch = function (input, init) {
-    console.log("start", input, basePath);
     if (typeof input === "string" && input.match(/ort.*.wasm/g)) {
         input = `${basePath}${input}`.replace(/\/\//g, "/");
-        console.log("fetch", input);
     }
 
     return originalFetch(input, init);
@@ -17,7 +15,6 @@ self.fetch = function (input, init) {
 import { Whisper, DecodingOptions, Tensor } from "@core/whisper";
 
 self.onmessage = function (e) {
-    console.log("worker received message", e);
     if (e.data.type === "init") {
         whisperWorker.whisper = new Whisper(
             e.data.modelType,
@@ -34,7 +31,6 @@ self.onmessage = function (e) {
             e.data.tensor.dtype,
             e.data.tensor.data
         );
-        console.log("run tensor", tensor);
         let audio = whisperWorker.whisper.pad_or_trim(tensor);
         whisperWorker.whisper
             .preprocessor(audio)
