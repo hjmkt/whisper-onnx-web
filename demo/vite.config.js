@@ -7,14 +7,16 @@ export default defineConfig(({ command, mode }) => {
         return {
             server: {
                 fs: {
-                    allow: [path.resolve(__dirname, "../src"), path.resolve(__dirname, "src")],
+                    allow: [
+                        path.resolve(__dirname, "../src"),
+                        path.resolve(__dirname, "src"),
+                    ],
                 },
             },
             base: "/whisper-onnx-web",
             plugins: [react()],
             assetsInclude: [
                 "**/*.onnx",
-                "**/vocab.json",
                 "**/*.gz",
                 "**/*.compressed",
             ],
