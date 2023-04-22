@@ -34,6 +34,8 @@ let lastBaseTexts = [];
 let tmpSmallText = "";
 let fixedText = "";
 let chunkIndex = 0;
+let audioConnected = false;
+let transcribing = false;
 
 function openDatabase() {
     return new Promise((resolve, reject) => {
@@ -55,14 +57,14 @@ function openDatabase() {
     });
 }
 
-async function cache(name, buffer) {
+async function cacheBuffer(name, buffer) {
     const db = await openDatabase();
     const transaction = db.transaction("files", "readwrite");
     const store = transaction.objectStore("files");
     store.put({ name, buffer });
 }
 
-async function getCachedData(name) {
+async function getCachedBuffer(name) {
     const db = await openDatabase();
     const transaction = db.transaction("files", "readonly");
     const store = transaction.objectStore("files");
@@ -86,18 +88,19 @@ async function getCachedData(name) {
 async function initWhisper(
     progressCallback,
     textCallback = () => {},
+    statusCallback,
     isProduction
 ) {
     if (!whisperInitialized) {
         Promise.all([
-            getCachedData("embedding-base"),
-            getCachedData("preproc-base-5s"),
-            getCachedData("encoder-base-5s"),
-            getCachedData("decoder-base-5s"),
-            getCachedData("embedding-small"),
-            getCachedData("preproc-small-10s"),
-            getCachedData("encoder-small-10s"),
-            getCachedData("decoder-small-10s"),
+            getCachedBuffer("embedding-base"),
+            getCachedBuffer("preproc-base-5s"),
+            getCachedBuffer("encoder-base-5s"),
+            getCachedBuffer("decoder-base-5s"),
+            getCachedBuffer("embedding-small"),
+            getCachedBuffer("preproc-small-10s"),
+            getCachedBuffer("encoder-small-10s"),
+            getCachedBuffer("decoder-small-10s"),
         ])
             .then((cachedData) => {
                 if (cachedData.every((v) => v !== null)) {
@@ -129,6 +132,7 @@ async function initWhisper(
                         });
                     }
                     progressCallback(100);
+                    statusCallback("ready");
                 } else {
                     throw new Error("No cached data");
                 }
@@ -209,15 +213,19 @@ async function initWhisper(
                                             isProduction: isProduction,
                                         });
                                     }
-                                    cache("embedding-base", v[0]);
-                                    cache("preproc-base-5s", v[1]);
-                                    cache("encoder-base-5s", v[2]);
-                                    cache("decoder-base-5s", v[3]);
-                                    cache("embedding-small", v[4]);
-                                    cache("preproc-small-10s", v[5]);
-                                    cache("encoder-small-10s", v[6]);
-                                    cache("decoder-small-10s", decoderSmall);
+                                    cacheBuffer("embedding-base", v[0]);
+                                    cacheBuffer("preproc-base-5s", v[1]);
+                                    cacheBuffer("encoder-base-5s", v[2]);
+                                    cacheBuffer("decoder-base-5s", v[3]);
+                                    cacheBuffer("embedding-small", v[4]);
+                                    cacheBuffer("preproc-small-10s", v[5]);
+                                    cacheBuffer("encoder-small-10s", v[6]);
+                                    cacheBuffer(
+                                        "decoder-small-10s",
+                                        decoderSmall
+                                    );
                                     progressCallback(100);
+                    statusCallback("ready");
                                 });
                                 return;
                             }
@@ -348,6 +356,10 @@ function runWhisper(
 }
 
 async function transcribe() {
+    transcribing = true;
+    if (audioConnected) {
+        return;
+    }
     const stream = await navigator.mediaDevices.getUserMedia({
         video: false,
         audio: true,
@@ -365,29 +377,32 @@ async function transcribe() {
             },
         });
         node.port.onmessage = (e) => {
-            let buffer = new Float32Array(e.data);
-            let tensor = {
-                shape: [buffer.length],
-                data: buffer,
-                dtype: "float32",
-            };
-            runWhisper("base", tensor);
-            if (chunkIndex % 2 == 1) {
-                runWhisper("small", tensor);
+            if (transcribing) {
+                let buffer = new Float32Array(e.data);
+                let tensor = {
+                    shape: [buffer.length],
+                    data: buffer,
+                    dtype: "float32",
+                };
+                runWhisper("base", tensor);
+                if (chunkIndex % 2 == 1) {
+                    runWhisper("small", tensor);
+                }
+                chunkIndex++;
             }
-            chunkIndex++;
         };
         source.connect(node);
     });
+    audioConnected = true;
 }
 
 const App = ({ isProduction }) => {
-    const [count, setCount] = useState(0);
     const [progress, setProgress] = useState(0);
     const [text, setText] = useState("");
+    const [status, setStatus] = useState("initializing");
 
     useEffect(() => {
-        initWhisper(setProgress, setText, isProduction);
+        initWhisper(setProgress, setText, setStatus, isProduction);
     });
 
     return (
@@ -418,12 +433,22 @@ const App = ({ isProduction }) => {
             />
             <div className="card">
                 <button
+                    disabled={status != "ready"}
                     onClick={() => {
-                        setCount((count) => count + 1);
                         transcribe();
+                        setStatus("running");
                     }}
                 >
-                    count is {count}
+                    Start Transcription
+                </button>
+                <button
+                    disabled={status != "running"}
+                    onClick={() => {
+                        transcribing = false;
+                        setStatus("ready");
+                    }}
+                >
+                    Stop Transcription
                 </button>
                 <p>
                     Edit <code>src/App.jsx</code> and save to test HMR
