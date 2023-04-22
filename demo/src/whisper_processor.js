@@ -6,8 +6,8 @@ class WhisperProcessor extends AudioWorkletProcessor {
 
     constructor(options) {
         super();
-        this.buffer = [];
         this.chunkLength = options.processorOptions.chunkLength;
+        this.buffer = Array(this.chunkLength * 8000).fill(0);
     }
 
     process(inputs, outputs, parameters) {
