@@ -3,14 +3,18 @@ import path from "path";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ command, mode }) => {
-    if (mode == "production") {
+    if (mode == "production" || true) {
         return {
+            server: {
+                fs: {
+                    allow: [path.resolve(__dirname, "../src"), path.resolve(__dirname, "src")],
+                },
+            },
             base: "/whisper-onnx-web",
             plugins: [react()],
             assetsInclude: [
                 "**/*.onnx",
                 "**/vocab.json",
-                //"**/*.wasm",
                 "**/*.gz",
                 "**/*.compressed",
             ],
@@ -32,7 +36,6 @@ export default defineConfig(({ command, mode }) => {
             assetsInclude: [
                 "**/*.onnx",
                 "**/vocab.json",
-                //"**/*.wasm",
                 "**/*.gz",
                 "**/*.compressed",
             ],

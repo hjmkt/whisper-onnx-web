@@ -892,7 +892,7 @@ export function Whisper(
 ) {
     this.debug = debug;
     this.running = false;
-    console.log("pre threads", ort.env.wasm.numThreads);
+    //console.log("pre threads", ort.env.wasm.numThreads);
     ort.env.wasm.numThreads = 4;
     this.encoderSession = ort.InferenceSession.create(encoderModel, {
         executionProviders: ["cpu"],

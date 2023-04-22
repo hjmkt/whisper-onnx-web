@@ -3,7 +3,6 @@ import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
 import "./App.css";
 import audioUrl from "./assets/en.mp3";
-import { Whisper, DecodingOptions, Tensor } from "@core/whisper";
 import positionalEmbeddingBaseUrl from "@models/positional_embedding_base.bin.compressed";
 import positionalEmbeddingSmallUrl from "@models/positional_embedding_small.bin.compressed";
 import processorCode from "./whisper_processor.js?raw";
@@ -102,7 +101,6 @@ async function initWhisper(
         ])
             .then((cachedData) => {
                 if (cachedData.every((v) => v !== null)) {
-                    console.log("Using cached data", cachedData);
                     let v = cachedData;
                     for (let i = 0; i < 2; i++) {
                         whisper_workers["base"][i].worker.postMessage({
@@ -136,7 +134,6 @@ async function initWhisper(
                 }
             })
             .catch((e) => {
-                console.log("cache error", e);
                 Promise.all([
                     fetch(positionalEmbeddingBaseUrl),
                     fetch(preprocessorBaseModelUrl),
@@ -369,7 +366,11 @@ async function transcribe() {
         });
         node.port.onmessage = (e) => {
             let buffer = new Float32Array(e.data);
-            let tensor = new Tensor([buffer.length], "float32", buffer);
+            let tensor = {
+                shape: [buffer.length],
+                data: buffer,
+                dtype: "float32",
+            };
             runWhisper("base", tensor);
             if (chunkIndex % 2 == 1) {
                 runWhisper("small", tensor);
@@ -403,7 +404,7 @@ const App = ({ isProduction }) => {
                     />
                 </a>
             </div>
-            <h1>Vite + React</h1>
+            <h1>Whisper ONNX Web</h1>
             <div>
                 <Circle progress={progress} />
             </div>
