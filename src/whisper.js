@@ -666,6 +666,50 @@ function DecodingTask(model, options) {
         return [languages, lang_probs];
     };
 
+    this.suppressRepeat = function (text) {
+        let found = true;
+        while (found) {
+            found = false;
+            let N = text.length;
+            for (let r = 1; r <= Math.floor(N / 2); r++) {
+                for (let i = 0; i < N - r; i++) {
+                    let sub = text.slice(i, i + r);
+                    let n_repeats = 1;
+                    for (let j = i + r; j < N - r + 1; j += r) {
+                        if (text.slice(j, j + r) == sub) {
+                            n_repeats++;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (r == 1 && n_repeats >= 4) {
+                        text = text.slice(0, i) + sub + text.slice(i + r * 3);
+                        found = true;
+                        break;
+                    } else if (r == 2 && n_repeats >= 3) {
+                        text = text.slice(0, i) + sub + text.slice(i + r * 2);
+                        found = true;
+                        break;
+                    } else if (r >= 3 && n_repeats >= 2) {
+                        text = text.slice(0, i) + sub + text.slice(i + r);
+                        found = true;
+                        break;
+                    } else {
+                        continue;
+                    }
+
+                    if (found) {
+                        break;
+                    }
+                }
+                if (found) {
+                    break;
+                }
+            }
+        }
+        return text;
+    };
+
     this._main_loop = async function (
         audio_features,
         tokens,
@@ -783,7 +827,7 @@ function DecodingTask(model, options) {
                 if (language != "en" && language != "ja") {
                     tokenCallback("");
                 } else {
-                    tokenCallback(texts[0]);
+                    tokenCallback(this.suppressRepeat(texts[0]));
                 }
             }
             if (completed || tokens.shape[1] > this.n_ctx) {
@@ -851,7 +895,7 @@ function DecodingTask(model, options) {
         }
         tokens = tokens[0];
         let texts = [];
-        texts.push(this.tokenizer.decode(tokens));
+        texts.push(this.suppressRepeat(this.tokenizer.decode(tokens)));
         if (this.model.debug) {
             console.log("[DEBUG] Tokens:", tokens);
             console.log("[DEBUG] Texts:", texts);

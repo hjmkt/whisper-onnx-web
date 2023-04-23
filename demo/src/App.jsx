@@ -155,7 +155,7 @@ async function initWhisper(
                     const total = lengths.reduce((a, b) => a + b, 0);
                     let buffers = lengths.map((v) => new Uint8Array(v));
                     let readers = fetchRes.map((v) => v.body.getReader());
-                    let chunks = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+                    let chunks = Array(9).fill(0);
                     let chunk = 0;
                     Promise.all(readers.map((v) => v.read())).then(
                         function process(res) {
@@ -225,7 +225,7 @@ async function initWhisper(
                                         decoderSmall
                                     );
                                     progressCallback(100);
-                    statusCallback("ready");
+                                    statusCallback("ready");
                                 });
                                 return;
                             }

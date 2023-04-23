@@ -12,7 +12,6 @@ class WhisperProcessor extends AudioWorkletProcessor {
 
     process(inputs, outputs, parameters) {
         let input = inputs[0];
-        //let output = outputs[0];
         let gain = parameters.hoge;
         for (let i = 0; i < input[0].length; i++) {
             this.buffer.push(input[0][i]);
