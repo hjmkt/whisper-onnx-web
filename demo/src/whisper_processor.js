@@ -1,7 +1,7 @@
 class WhisperProcessor extends AudioWorkletProcessor {
     // Custom AudioParams can be defined with this static getter.
     static get parameterDescriptors() {
-        return [{ name: "hoge", defaultValue: 1 }];
+        return [{ name: "running", defaultValue: true }];
     }
 
     constructor(options) {
