@@ -1,5 +1,7 @@
 # whisper-onnx-web
 
+## Use Whisper in your web application
+
 ```javascript
 let modelType = "small";
 
@@ -36,4 +38,11 @@ let text = await whisper
 
 console.log(text);
 // "Hello world."
+```
+
+# Run the demo application
+
+```bash
+cd /path/to/demo
+yarn dev # open your web browser
 ```
